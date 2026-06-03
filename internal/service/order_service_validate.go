@@ -37,12 +37,20 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 	originalAmount := decimal.Zero
 	memberDiscountAmount := decimal.Zero
 	promotionDiscountAmount := decimal.Zero
+	wholesaleDiscountAmount := decimal.Zero
 	currency := resolveServiceSiteCurrency(s.settingService)
 	now := time.Now()
 	var promotionIDValue uint
 	var promotionSeen bool
 	promotionSame := true
 	var noPromotionSeen bool
+	productQuantityTotals := make(map[uint]int, len(mergedItems))
+	for _, item := range mergedItems {
+		if item.ProductID == 0 || item.Quantity <= 0 {
+			continue
+		}
+		productQuantityTotals[item.ProductID] += item.Quantity
+	}
 
 	// 解析用户会员等级
 	var userMemberLevelID uint
@@ -99,16 +107,33 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		}
 		promoUnitPriceAmount := promoUnitPrice.Decimal.Round(2)
 
-		// 2. 先应用活动价，再在活动价基础上应用会员价
+		// 2. 活动价与批发价取更优单价，避免两个商品级阶梯价叠加造成不可预期折扣。
 		unitPriceAmount := promoUnitPriceAmount
 		promotionDiscount := decimal.Zero
 		if promotion != nil && basePrice.GreaterThan(promoUnitPriceAmount) {
 			promotionDiscount = basePrice.Sub(promoUnitPriceAmount).
 				Mul(decimal.NewFromInt(int64(item.Quantity))).
 				Round(2)
-			promotionDiscountAmount = promotionDiscountAmount.Add(promotionDiscount).Round(2)
 		}
 
+		wholesaleMatchQuantity := productQuantityTotals[item.ProductID]
+		if wholesaleMatchQuantity <= 0 {
+			wholesaleMatchQuantity = item.Quantity
+		}
+		wholesaleUnitPrice, wholesaleDiscount, wholesaleMatched := ResolveWholesaleUnitPriceWithMatchQuantity(product, basePrice, wholesaleMatchQuantity, item.Quantity)
+		if wholesaleMatched && wholesaleUnitPrice.LessThan(unitPriceAmount) {
+			unitPriceAmount = wholesaleUnitPrice
+			promotion = nil
+			promotionDiscount = decimal.Zero
+			wholesaleDiscountAmount = wholesaleDiscountAmount.Add(wholesaleDiscount).Round(2)
+		} else if promotionDiscount.GreaterThan(decimal.Zero) {
+			promotionDiscountAmount = promotionDiscountAmount.Add(promotionDiscount).Round(2)
+			wholesaleDiscount = decimal.Zero
+		} else {
+			wholesaleDiscount = decimal.Zero
+		}
+
+		// 3. 在已命中的商品级优惠单价基础上应用会员价。
 		itemMemberDiscount := decimal.Zero
 		if userMemberLevelID > 0 && s.memberLevelService != nil {
 			memberUnitPrice, _ := s.memberLevelService.ResolveMemberPrice(userMemberLevelID, product.ID, sku.ID, unitPriceAmount)
@@ -121,7 +146,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 			}
 		}
 
-		// 3. 兼容活动规则命中但未形成实际优惠的情况
+		// 4. 兼容活动规则命中但未形成实际优惠的情况
 		if promotion != nil && promotionDiscount.IsZero() && !basePrice.GreaterThan(promoUnitPriceAmount) {
 			promotion = nil
 		}
@@ -198,6 +223,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 			MemberDiscount:               models.NewMoneyFromDecimal(itemMemberDiscount),
 			CouponDiscount:               models.NewMoneyFromDecimal(decimal.Zero),
 			PromotionDiscount:            models.NewMoneyFromDecimal(promotionDiscount),
+			WholesaleDiscount:            models.NewMoneyFromDecimal(wholesaleDiscount),
 			PromotionID:                  promotionID,
 			FulfillmentType:              fulfillmentType,
 			ManualFormSchemaSnapshotJSON: manualSchemaSnapshot,
@@ -214,6 +240,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 			TotalAmount:       total,
 			MemberDiscount:    itemMemberDiscount,
 			PromotionDiscount: promotionDiscount,
+			WholesaleDiscount: wholesaleDiscount,
 			Currency:          productCurrency,
 		})
 	}
@@ -262,6 +289,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		plan.Item.MemberDiscount = models.NewMoneyFromDecimal(plan.MemberDiscount)
 		plan.Item.CouponDiscount = models.NewMoneyFromDecimal(plan.CouponDiscount)
 		plan.Item.PromotionDiscount = models.NewMoneyFromDecimal(plan.PromotionDiscount)
+		plan.Item.WholesaleDiscount = models.NewMoneyFromDecimal(plan.WholesaleDiscount)
 		plan.Item.TotalPrice = models.NewMoneyFromDecimal(plan.TotalAmount)
 		planTotal := plan.TotalAmount.Sub(plan.CouponDiscount).Round(2)
 		if planTotal.LessThan(decimal.Zero) {
@@ -279,6 +307,7 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		OriginalAmount:          originalAmount,
 		MemberDiscountAmount:    memberDiscountAmount,
 		PromotionDiscountAmount: promotionDiscountAmount,
+		WholesaleDiscountAmount: wholesaleDiscountAmount,
 		DiscountAmount:          discountAmount,
 		TotalAmount:             totalAmount,
 		Currency:                currency,

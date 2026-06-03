@@ -345,6 +345,54 @@ func TestSyncProductMarksInactiveWhenUpstreamReturnsInactive(t *testing.T) {
 	}
 }
 
+func TestSyncProductKeepsLocalWholesalePricesWhenUpstreamOmitsWholesalePrices(t *testing.T) {
+	svc, db, mapping, cleanup := setupMappingWithUpstreamHandler(t,
+		"file:sync_keep_local_wholesale?mode=memory&cache=shared",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"product": upstream.UpstreamProduct{
+					ID:              101,
+					Title:           models.JSON{"zh-CN": "测试"},
+					PriceAmount:     "10.00",
+					Currency:        "CNY",
+					FulfillmentType: constants.FulfillmentTypeAuto,
+					IsActive:        true,
+					SKUs: []upstream.UpstreamSKU{
+						{ID: 201, SKUCode: "SKU-A", PriceAmount: "10.00", IsActive: true, StockQuantity: 100},
+					},
+				},
+			})
+		},
+	)
+	defer cleanup()
+
+	localWholesalePrices := models.WholesalePriceTiers{
+		{MinQuantity: 5, UnitPrice: models.NewMoneyFromDecimal(decimal.NewFromInt(80))},
+	}
+	if err := db.Model(&models.Product{}).
+		Where("id = ?", mapping.LocalProductID).
+		Update("wholesale_prices", localWholesalePrices).Error; err != nil {
+		t.Fatalf("seed local wholesale prices failed: %v", err)
+	}
+
+	if err := svc.SyncProduct(mapping.ID); err != nil {
+		t.Fatalf("SyncProduct returned error: %v", err)
+	}
+
+	var product models.Product
+	if err := db.First(&product, mapping.LocalProductID).Error; err != nil {
+		t.Fatalf("reload product failed: %v", err)
+	}
+	if len(product.WholesalePrices) != 1 {
+		t.Fatalf("expected local wholesale prices to be kept, got %+v", product.WholesalePrices)
+	}
+	if product.WholesalePrices[0].MinQuantity != 5 || product.WholesalePrices[0].UnitPrice.String() != "80.00" {
+		t.Fatalf("unexpected wholesale tier: %+v", product.WholesalePrices[0])
+	}
+}
+
 // listProductsHandler 构造一个 /api/v1/upstream/products 列表响应 handler
 func listProductsHandler(items []upstream.UpstreamProduct, includesInactive bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

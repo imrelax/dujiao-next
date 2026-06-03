@@ -146,6 +146,7 @@ func (s *ProductMappingService) importUpstreamProduct(connectionID uint, upstrea
 		ManualFormSchemaJSON: upProduct.ManualFormSchema,
 		PriceAmount:          models.NewMoneyFromDecimal(priceAmount.Round(2)),
 		CostPriceAmount:      models.NewMoneyFromDecimal(costPriceAmount.Round(2)),
+		WholesalePrices:      convertUpstreamWholesalePrices(upProduct.WholesalePrices, exchangeRate, markupPercent, roundingMode),
 		Images:               models.StringArray(localImages),
 		Tags:                 models.StringArray(upProduct.Tags),
 		PurchaseType:         constants.ProductPurchaseMember,
@@ -302,6 +303,58 @@ func createSKUMappingsWithRepo(
 	}
 
 	return nil
+}
+
+func convertUpstreamWholesalePrices(tiers models.WholesalePriceTiers, exchangeRate, markupPercent decimal.Decimal, roundingMode string) models.WholesalePriceTiers {
+	if len(tiers) == 0 {
+		return models.WholesalePriceTiers{}
+	}
+	converted := make([]WholesalePriceInput, 0, len(tiers))
+	skipped := 0
+	for idx, tier := range tiers {
+		if tier.MinQuantity <= 0 || tier.UnitPrice.Decimal.LessThanOrEqual(decimal.Zero) {
+			skipped++
+			logger.Warnw("convert_upstream_wholesale_price_invalid",
+				"index", idx,
+				"min_quantity", tier.MinQuantity,
+				"unit_price", tier.UnitPrice.String(),
+			)
+			continue
+		}
+		localPrice := CalculateLocalPrice(tier.UnitPrice.Decimal, exchangeRate, markupPercent, roundingMode)
+		if localPrice.LessThanOrEqual(decimal.Zero) {
+			skipped++
+			logger.Warnw("convert_upstream_wholesale_price_invalid",
+				"index", idx,
+				"min_quantity", tier.MinQuantity,
+				"unit_price", tier.UnitPrice.String(),
+				"local_price", localPrice.String(),
+			)
+			continue
+		}
+		converted = append(converted, WholesalePriceInput{
+			MinQuantity: tier.MinQuantity,
+			UnitPrice:   localPrice,
+		})
+	}
+	normalized, err := normalizeWholesalePriceInputs(converted)
+	if err != nil {
+		logger.Warnw("convert_upstream_wholesale_prices_failed",
+			"error", err,
+			"tier_count", len(tiers),
+			"valid_tier_count", len(converted),
+			"skipped_tier_count", skipped,
+		)
+		return models.WholesalePriceTiers{}
+	}
+	if skipped > 0 {
+		logger.Warnw("convert_upstream_wholesale_prices_skipped_invalid",
+			"tier_count", len(tiers),
+			"valid_tier_count", len(converted),
+			"skipped_tier_count", skipped,
+		)
+	}
+	return normalized
 }
 
 // downloadImages 下载上游图片到本地

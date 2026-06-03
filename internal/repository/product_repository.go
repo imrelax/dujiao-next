@@ -99,6 +99,14 @@ func (r *GormProductRepository) List(filter ProductListFilter) ([]models.Product
 
 	stockStatus := strings.ToLower(strings.TrimSpace(filter.StockStatus))
 	query = applyStockStatusFilter(query, stockStatus, filter.LowStockThreshold)
+	if filter.HasWholesalePrices != nil {
+		expr := jsonArrayLengthExpr(r.db, "wholesale_prices")
+		if *filter.HasWholesalePrices {
+			query = query.Where(expr + " > 0")
+		} else {
+			query = query.Where(expr + " = 0")
+		}
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {

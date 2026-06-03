@@ -71,9 +71,29 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 		return fmt.Errorf("get local product: %w", err)
 	}
 	if localProduct != nil {
+		needsProductUpdate := false
 		// 同步人工交付表单配置
 		if upProduct.ManualFormSchema != nil {
 			localProduct.ManualFormSchemaJSON = upProduct.ManualFormSchema
+			needsProductUpdate = true
+		}
+		// 上游未返回批发价时不覆盖本地配置，避免运营手动配置被同步任务清空。
+		if len(upProduct.WholesalePrices) > 0 {
+			wholesalePrices := convertUpstreamWholesalePrices(upProduct.WholesalePrices, conn.ExchangeRate, conn.PriceMarkupPercent, conn.PriceRoundingMode)
+			if len(wholesalePrices) > 0 {
+				localProduct.WholesalePrices = wholesalePrices
+				needsProductUpdate = true
+			} else {
+				logger.Warnw("sync_upstream_wholesale_prices_empty_after_convert",
+					"mapping_id", mapping.ID,
+					"connection_id", mapping.ConnectionID,
+					"upstream_product_id", mapping.UpstreamProductID,
+					"local_product_id", mapping.LocalProductID,
+					"upstream_tier_count", len(upProduct.WholesalePrices),
+				)
+			}
+		}
+		if needsProductUpdate {
 			_ = s.productRepo.Update(localProduct)
 		}
 	}

@@ -75,6 +75,7 @@ func (v *publicProductView) toProductResp() dto.ProductResp {
 		Description:          v.Product.DescriptionJSON,
 		Content:              v.Product.ContentJSON,
 		PriceAmount:          v.Product.PriceAmount,
+		WholesalePrices:      dto.NewWholesalePriceRespList(v.Product.WholesalePrices),
 		Images:               v.Product.Images,
 		Tags:                 v.Product.Tags,
 		PurchaseType:         v.Product.PurchaseType,

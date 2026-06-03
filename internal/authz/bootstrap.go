@@ -50,6 +50,7 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/card-secrets/batch-status", Action: "PATCH"},
 				{Object: "/admin/card-secrets/batch-delete", Action: "POST"},
 				{Object: "/admin/card-secrets/export", Action: "POST"},
+				{Object: "/admin/card-secrets/export-available", Action: "POST"},
 				{Object: "/admin/card-secrets/stats", Action: "GET"},
 				{Object: "/admin/card-secrets/batches", Action: "GET"},
 				{Object: "/admin/card-secrets/template", Action: "GET"},

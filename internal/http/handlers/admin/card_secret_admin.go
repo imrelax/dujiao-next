@@ -62,6 +62,16 @@ type ExportCardSecretRequest struct {
 	Format  string                  `json:"format" binding:"required"`
 }
 
+// ExportAvailableCardSecretRequest 可用卡密出库导出请求
+type ExportAvailableCardSecretRequest struct {
+	ProductID         uint   `json:"product_id" binding:"required"`
+	SKUID             uint   `json:"sku_id"`
+	BatchID           uint   `json:"batch_id"`
+	Limit             int    `json:"limit" binding:"required"`
+	Format            string `json:"format" binding:"required"`
+	DeleteAfterExport bool   `json:"delete_after_export"`
+}
+
 func buildCardSecretListInput(filter *CardSecretQueryRequest) service.ListCardSecretInput {
 	if filter == nil {
 		return service.ListCardSecretInput{}
@@ -382,6 +392,50 @@ func (h *Handler) ExportCardSecrets(c *gin.Context) {
 	c.Header("Content-Type", contentType)
 	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	c.Data(200, contentType, content)
+}
+
+// ExportAvailableCardSecrets 从可用库存中导出卡密并出库
+func (h *Handler) ExportAvailableCardSecrets(c *gin.Context) {
+	var req ExportAvailableCardSecretRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		shared.RespondBindError(c, err)
+		return
+	}
+
+	result, err := h.CardSecretService.ExportAvailableCardSecrets(service.ExportAvailableCardSecretInput{
+		ProductID:         req.ProductID,
+		SKUID:             req.SKUID,
+		BatchID:           req.BatchID,
+		Limit:             req.Limit,
+		Format:            req.Format,
+		DeleteAfterExport: req.DeleteAfterExport,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrCardSecretInvalid),
+			errors.Is(err, service.ErrProductSKUInvalid):
+			shared.RespondError(c, response.CodeBadRequest, "error.card_secret_invalid", nil)
+		case errors.Is(err, service.ErrProductNotFound),
+			errors.Is(err, service.ErrNotFound):
+			shared.RespondError(c, response.CodeNotFound, "error.card_secret_not_found", nil)
+		case errors.Is(err, service.ErrCardSecretInsufficient):
+			shared.RespondError(c, response.CodeBadRequest, "error.card_secret_insufficient", nil)
+		case errors.Is(err, service.ErrCardSecretUpdateFailed):
+			shared.RespondError(c, response.CodeInternal, "error.card_secret_update_failed", err)
+		case errors.Is(err, service.ErrCardSecretDeleteFailed):
+			shared.RespondError(c, response.CodeInternal, "error.card_secret_delete_failed", err)
+		default:
+			shared.RespondError(c, response.CodeInternal, "error.card_secret_fetch_failed", err)
+		}
+		return
+	}
+
+	normalizedFormat := strings.ToLower(strings.TrimSpace(req.Format))
+	filename := "card-secrets-available-" + time.Now().Format("20060102-150405") + "." + normalizedFormat
+	c.Header("Content-Type", result.ContentType)
+	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	c.Header("X-Exported-Count", strconv.Itoa(result.Count))
+	c.Data(200, result.ContentType, result.Content)
 }
 
 // GetCardSecretStats 获取库存统计

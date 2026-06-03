@@ -702,3 +702,148 @@ func TestCardSecretServiceListBatchesReturnsRealtimeCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestExportAvailableCardSecretsMarksUsed(t *testing.T) {
+	db := setupCardSecretServiceTestDB(t)
+	product := &models.Product{
+		CategoryID:      1,
+		Slug:            "export-available-used",
+		TitleJSON:       models.JSON{"zh-CN": "出库导出商品"},
+		PriceAmount:     models.NewMoneyFromDecimal(decimal.NewFromInt(88)),
+		PurchaseType:    constants.ProductPurchaseMember,
+		FulfillmentType: constants.FulfillmentTypeAuto,
+		IsActive:        true,
+	}
+	if err := db.Create(product).Error; err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+	sku := &models.ProductSKU{
+		ProductID:   product.ID,
+		SKUCode:     models.DefaultSKUCode,
+		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(88)),
+		IsActive:    true,
+	}
+	if err := db.Create(sku).Error; err != nil {
+		t.Fatalf("create sku failed: %v", err)
+	}
+
+	svc := NewCardSecretService(
+		repository.NewCardSecretRepository(db),
+		repository.NewCardSecretBatchRepository(db),
+		repository.NewProductRepository(db),
+		repository.NewProductSKURepository(db),
+	)
+	batch, _, err := svc.CreateCardSecretBatch(CreateCardSecretBatchInput{
+		ProductID: product.ID,
+		Secrets:   []string{"EXP-A-001", "EXP-A-002", "EXP-A-003"},
+		BatchNo:   "EXP-A",
+		Source:    constants.CardSecretSourceManual,
+	})
+	if err != nil {
+		t.Fatalf("create batch failed: %v", err)
+	}
+
+	result, err := svc.ExportAvailableCardSecrets(ExportAvailableCardSecretInput{
+		ProductID: product.ID,
+		SKUID:     sku.ID,
+		BatchID:   batch.ID,
+		Limit:     2,
+		Format:    constants.ExportFormatTXT,
+	})
+	if err != nil {
+		t.Fatalf("export available failed: %v", err)
+	}
+	if result.Count != 2 || strings.TrimSpace(string(result.Content)) != "EXP-A-001\nEXP-A-002" {
+		t.Fatalf("unexpected export result: count=%d content=%q", result.Count, string(result.Content))
+	}
+
+	rows, _, err := svc.ListCardSecrets(ListCardSecretInput{
+		ProductID: product.ID,
+		SKUID:     sku.ID,
+		BatchID:   batch.ID,
+		Page:      1,
+		PageSize:  10,
+	})
+	if err != nil {
+		t.Fatalf("list secrets failed: %v", err)
+	}
+	statusBySecret := map[string]string{}
+	for _, row := range rows {
+		statusBySecret[row.Secret] = row.Status
+	}
+	if statusBySecret["EXP-A-001"] != models.CardSecretStatusUsed ||
+		statusBySecret["EXP-A-002"] != models.CardSecretStatusUsed ||
+		statusBySecret["EXP-A-003"] != models.CardSecretStatusAvailable {
+		t.Fatalf("unexpected statuses: %+v", statusBySecret)
+	}
+}
+
+func TestExportAvailableCardSecretsDeletesAfterExport(t *testing.T) {
+	db := setupCardSecretServiceTestDB(t)
+	product := &models.Product{
+		CategoryID:      1,
+		Slug:            "export-available-delete",
+		TitleJSON:       models.JSON{"zh-CN": "导出删除商品"},
+		PriceAmount:     models.NewMoneyFromDecimal(decimal.NewFromInt(88)),
+		PurchaseType:    constants.ProductPurchaseMember,
+		FulfillmentType: constants.FulfillmentTypeAuto,
+		IsActive:        true,
+	}
+	if err := db.Create(product).Error; err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+	sku := &models.ProductSKU{
+		ProductID:   product.ID,
+		SKUCode:     models.DefaultSKUCode,
+		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(88)),
+		IsActive:    true,
+	}
+	if err := db.Create(sku).Error; err != nil {
+		t.Fatalf("create sku failed: %v", err)
+	}
+
+	svc := NewCardSecretService(
+		repository.NewCardSecretRepository(db),
+		repository.NewCardSecretBatchRepository(db),
+		repository.NewProductRepository(db),
+		repository.NewProductSKURepository(db),
+	)
+	batch, _, err := svc.CreateCardSecretBatch(CreateCardSecretBatchInput{
+		ProductID: product.ID,
+		Secrets:   []string{"EXP-D-001", "EXP-D-002"},
+		BatchNo:   "EXP-D",
+		Source:    constants.CardSecretSourceManual,
+	})
+	if err != nil {
+		t.Fatalf("create batch failed: %v", err)
+	}
+
+	result, err := svc.ExportAvailableCardSecrets(ExportAvailableCardSecretInput{
+		ProductID:         product.ID,
+		SKUID:             sku.ID,
+		BatchID:           batch.ID,
+		Limit:             1,
+		Format:            constants.ExportFormatTXT,
+		DeleteAfterExport: true,
+	})
+	if err != nil {
+		t.Fatalf("export available with delete failed: %v", err)
+	}
+	if result.Count != 1 || strings.TrimSpace(string(result.Content)) != "EXP-D-001" {
+		t.Fatalf("unexpected export result: count=%d content=%q", result.Count, string(result.Content))
+	}
+
+	rows, _, err := svc.ListCardSecrets(ListCardSecretInput{
+		ProductID: product.ID,
+		SKUID:     sku.ID,
+		BatchID:   batch.ID,
+		Page:      1,
+		PageSize:  10,
+	})
+	if err != nil {
+		t.Fatalf("list secrets failed: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Secret != "EXP-D-002" || rows[0].Status != models.CardSecretStatusAvailable {
+		t.Fatalf("unexpected remaining rows: %+v", rows)
+	}
+}

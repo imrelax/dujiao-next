@@ -113,6 +113,7 @@ type CreateProductInput struct {
 	ManualFormSchemaJSON map[string]interface{}
 	PriceAmount          decimal.Decimal
 	CostPriceAmount      decimal.Decimal
+	WholesalePrices      []WholesalePriceInput
 	Images               []string
 	Tags                 []string
 	PurchaseType         string
@@ -125,6 +126,11 @@ type CreateProductInput struct {
 	IsAffiliateEnabled   *bool
 	IsActive             *bool
 	SortOrder            int
+}
+
+type WholesalePriceInput struct {
+	MinQuantity int
+	UnitPrice   decimal.Decimal
 }
 
 type ProductSKUInput struct {
@@ -195,17 +201,18 @@ func (s *ProductService) GetPublicBySlug(slug string) (*models.Product, error) {
 }
 
 // ListAdmin 获取后台商品列表
-func (s *ProductService) ListAdmin(categoryID, search, fulfillmentType, stockStatus string, lowStockThreshold int, page, pageSize int) ([]models.Product, int64, error) {
+func (s *ProductService) ListAdmin(categoryID, search, fulfillmentType, stockStatus string, hasWholesalePrices *bool, lowStockThreshold int, page, pageSize int) ([]models.Product, int64, error) {
 	filter := repository.ProductListFilter{
-		Page:              page,
-		PageSize:          pageSize,
-		CategoryID:        categoryID,
-		Search:            search,
-		FulfillmentType:   strings.TrimSpace(fulfillmentType),
-		StockStatus:       normalizeStockStatus(stockStatus),
-		LowStockThreshold: lowStockThreshold,
-		OnlyActive:        false,
-		WithCategory:      true,
+		Page:               page,
+		PageSize:           pageSize,
+		CategoryID:         categoryID,
+		Search:             search,
+		FulfillmentType:    strings.TrimSpace(fulfillmentType),
+		StockStatus:        normalizeStockStatus(stockStatus),
+		HasWholesalePrices: hasWholesalePrices,
+		LowStockThreshold:  lowStockThreshold,
+		OnlyActive:         false,
+		WithCategory:       true,
 	}
 	return s.repo.List(filter)
 }
@@ -278,6 +285,10 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 	}
 
 	costPriceAmount := input.CostPriceAmount.Round(2)
+	wholesalePrices, err := normalizeWholesalePriceInputs(input.WholesalePrices)
+	if err != nil {
+		return nil, err
+	}
 
 	var normalizedSKUs []normalizedProductSKU
 	if len(input.SKUs) > 0 {
@@ -307,6 +318,7 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 		ManualFormSchemaJSON: models.JSON{},
 		PriceAmount:          models.NewMoneyFromDecimal(priceAmount),
 		CostPriceAmount:      models.NewMoneyFromDecimal(costPriceAmount),
+		WholesalePrices:      wholesalePrices,
 		Images:               models.StringArray(input.Images),
 		Tags:                 models.StringArray(input.Tags),
 		PurchaseType:         purchaseType,
@@ -387,6 +399,11 @@ func (s *ProductService) Update(id string, input CreateProductInput) (*models.Pr
 	product.InstructionsJSON = models.JSON(input.InstructionsJSON)
 	product.ManualFormSchemaJSON = models.JSON{}
 	product.PriceAmount = models.NewMoneyFromDecimal(priceAmount)
+	wholesalePrices, err := normalizeWholesalePriceInputs(input.WholesalePrices)
+	if err != nil {
+		return nil, err
+	}
+	product.WholesalePrices = wholesalePrices
 	product.SortOrder = input.SortOrder
 	product.Images = models.StringArray(input.Images)
 	product.Tags = models.StringArray(input.Tags)
