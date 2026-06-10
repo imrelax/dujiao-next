@@ -173,12 +173,38 @@ func (r *GormUserRepository) List(filter UserListFilter) ([]models.User, int64, 
 	}
 
 	query = applyPagination(query, filter.Page, filter.PageSize)
+	query = applyUserSort(query, filter.SortBy, filter.SortOrder)
 
 	var users []models.User
-	if err := query.Order("id DESC").Find(&users).Error; err != nil {
+	if err := query.Find(&users).Error; err != nil {
 		return nil, 0, err
 	}
 	return users, total, nil
+}
+
+// applyUserSort 按白名单字段排序，并追加 users.id DESC 作为二级排序保证分页稳定；
+// 非法字段回退默认 id DESC。
+func applyUserSort(query *gorm.DB, sortBy, sortOrder string) *gorm.DB {
+	dir := "DESC"
+	if strings.EqualFold(strings.TrimSpace(sortOrder), "asc") {
+		dir = "ASC"
+	}
+	switch strings.TrimSpace(sortBy) {
+	case "created_at":
+		return query.Order("users.created_at " + dir).Order("users.id DESC")
+	case "last_login_at":
+		// (last_login_at IS NULL) 让从未登录的用户始终垫底，跨 SQLite/PostgreSQL 行为一致
+		return query.Order("users.last_login_at IS NULL").Order("users.last_login_at " + dir).Order("users.id DESC")
+	case "wallet_balance":
+		// 钱包余额在 wallet_accounts 表，LEFT JOIN + COALESCE(0) 让无账户用户按余额 0 处理
+		return query.
+			Joins("LEFT JOIN wallet_accounts ON wallet_accounts.user_id = users.id").
+			Select("users.*").
+			Order("COALESCE(wallet_accounts.balance, 0) " + dir).
+			Order("users.id DESC")
+	default:
+		return query.Order("users.id DESC")
+	}
 }
 
 // BatchUpdateStatus 批量更新用户状态

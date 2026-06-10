@@ -112,6 +112,8 @@ func (h *Handler) GetAdminUsers(c *gin.Context) {
 		CreatedTo:     createdTo,
 		LastLoginFrom: lastLoginFrom,
 		LastLoginTo:   lastLoginTo,
+		SortBy:        strings.TrimSpace(c.Query("sort_by")),
+		SortOrder:     strings.TrimSpace(c.Query("sort_order")),
 	})
 	if err != nil {
 		shared.RespondError(c, response.CodeInternal, "error.user_fetch_failed", err)

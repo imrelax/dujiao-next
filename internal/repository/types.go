@@ -121,6 +121,8 @@ type UserListFilter struct {
 	CreatedTo     *time.Time
 	LastLoginFrom *time.Time
 	LastLoginTo   *time.Time
+	SortBy        string // 排序字段：created_at / last_login_at / wallet_balance，其它值回退默认
+	SortOrder     string // 排序方向：asc / desc（默认 desc）
 }
 
 // WalletAccountListFilter 查询钱包账户列表的过滤条件
