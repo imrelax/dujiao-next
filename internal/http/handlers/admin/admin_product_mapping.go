@@ -16,9 +16,15 @@ func (h *Handler) GetProductMappings(c *gin.Context) {
 	page, pageSize := shared.ParsePagination(c)
 
 	connectionID, _ := shared.ParseQueryUint(c.Query("connection_id"), false)
+	upstreamStatus := c.Query("upstream_status")
+	productStatus := c.Query("product_status")
+	search := c.Query("search")
 
 	mappings, total, err := h.ProductMappingService.List(repository.ProductMappingListFilter{
-		ConnectionID: connectionID,
+		ConnectionID:   connectionID,
+		UpstreamStatus: upstreamStatus,
+		ProductStatus:  productStatus,
+		Search:         search,
 		Pagination: repository.Pagination{
 			Page:     page,
 			PageSize: pageSize,
