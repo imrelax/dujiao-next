@@ -364,15 +364,9 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	data["email_domain_allowlist_enabled"] = emailDomainPolicy.Enabled
 	data["allowed_email_domains"] = emailDomainPolicy.AllowedDomains
 
-	// 导航配置
-	navConfigVal, _ := h.SettingService.GetByKey(constants.SettingKeyNavConfig)
-	if navConfigVal != nil {
+	// 导航配置（形态统一交由下方下发层 shim 归一化；无配置时 shim 产出规范默认）
+	if navConfigVal, _ := h.SettingService.GetByKey(constants.SettingKeyNavConfig); navConfigVal != nil {
 		data["nav_config"] = navConfigVal
-	} else {
-		data["nav_config"] = map[string]interface{}{
-			"builtin":      map[string]interface{}{"blog": true, "notice": true, "about": true},
-			"custom_items": make([]interface{}, 0),
-		}
 	}
 
 	// 首页公告（仅在启用、处于排期内且内容非空时下发）
@@ -390,6 +384,10 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	} else if tenant.ResellerID == nil {
 		data["tenant"] = map[string]interface{}{"mode": "main", "host": tenant.Host}
 	}
+
+	// 下发层统一归一化：无论主站/经销商/默认何种形态，都把 nav_config 收敛为规范有序数组，
+	// 让前端只面对单一数组形态（builtin 与 custom_items 共享全局 sort_order）。
+	data["nav_config"] = service.NormalizeNavConfigForPublic(data["nav_config"])
 
 	_ = cache.SetJSON(c.Request.Context(), cacheKey, data, publicConfigCacheTTL)
 	data["server_time"] = time.Now().UnixMilli()

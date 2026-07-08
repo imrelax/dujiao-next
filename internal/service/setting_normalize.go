@@ -2,6 +2,7 @@ package service
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dujiao-next/internal/config"
@@ -354,97 +355,284 @@ func normalizeStorefrontTemplate(raw interface{}) string {
 	return constants.StorefrontTemplateDefault
 }
 
-func normalizeNavConfig(value map[string]interface{}) models.JSON {
-	// builtin: blog / notice / about 开关，默认 true
-	builtin := map[string]interface{}{
-		"blog":   true,
-		"notice": true,
-		"about":  true,
-	}
-	if builtinRaw, ok := value["builtin"].(map[string]interface{}); ok {
-		for _, key := range []string{"blog", "notice", "about"} {
-			if raw, exists := builtinRaw[key]; exists {
-				builtin[key] = parseSettingBool(raw)
-			}
+// navBuiltinKeys 是内置导航项的白名单与默认顺序（不可删除）。
+var navBuiltinKeys = []string{"blog", "notice", "about"}
+
+// navBuiltinKeyAllowed 判断给定 key 是否属于内置导航白名单。
+func navBuiltinKeyAllowed(key string) bool {
+	for _, allowed := range navBuiltinKeys {
+		if allowed == key {
+			return true
 		}
 	}
+	return false
+}
 
-	// custom_items: 自定义导航项
-	customItems := make([]interface{}, 0)
-	if itemsRaw, ok := value["custom_items"].([]interface{}); ok {
-		for _, itemRaw := range itemsRaw {
-			itemMap, ok := itemRaw.(map[string]interface{})
+// navOrderedEntry 是导航项在全局排序时的中间表示。
+type navOrderedEntry struct {
+	order   int
+	payload map[string]interface{}
+}
+
+// navEntryOrder 读取导航条目的 sort_order，缺失或非法时回退 0。
+func navEntryOrder(item map[string]interface{}) int {
+	if v, err := parseSettingInt(item["sort_order"]); err == nil {
+		return v
+	}
+	return 0
+}
+
+// assignGlobalNavOrder 合并内置项与自定义项，按 sort_order 稳定升序排序后
+// 规整为连续的全局 sort_order（0..N），并写回各自条目。
+// 合并时内置项在前，故同 sort_order 时内置优先（确定性兜底）。
+func assignGlobalNavOrder(builtin, custom []map[string]interface{}) {
+	entries := make([]navOrderedEntry, 0, len(builtin)+len(custom))
+	for _, item := range builtin {
+		entries = append(entries, navOrderedEntry{order: navEntryOrder(item), payload: item})
+	}
+	for _, item := range custom {
+		entries = append(entries, navOrderedEntry{order: navEntryOrder(item), payload: item})
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].order < entries[j].order
+	})
+
+	for index := range entries {
+		entries[index].payload["sort_order"] = index
+	}
+}
+
+// offsetNavCustomOrder 将自定义项整体排到内置项之后（用于旧布尔字典迁移场景）：
+// 先按自定义项各自 sort_order 稳定排序，再顺延内置项之后赋全局序号。
+func offsetNavCustomOrder(builtin, custom []map[string]interface{}) {
+	sort.SliceStable(custom, func(i, j int) bool {
+		return navEntryOrder(custom[i]) < navEntryOrder(custom[j])
+	})
+	base := len(builtin)
+	for index, item := range custom {
+		item["sort_order"] = base + index
+	}
+}
+
+// toInterfaceSlice 将 []map[string]interface{} 转为 []interface{}，供 models.JSON 存储。
+func toInterfaceSlice(items []map[string]interface{}) []interface{} {
+	result := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		result = append(result, item)
+	}
+	return result
+}
+
+// normalizeNavBuiltinItems 将 builtin 段（有序数组或旧布尔字典）归一化为规范有序数组
+// [{key, enabled, sort_order}]。始终保留全部白名单 key（不可删除），非法 key 丢弃、
+// 重复去重、缺失补齐、enabled 缺省 true。当入参为数组时 fromArray=true，
+// 供上游决定自定义项的排序策略（数组=全局穿插，字典=内置在前自定义顺延）。
+func normalizeNavBuiltinItems(raw interface{}) (items []map[string]interface{}, fromArray bool) {
+	enabledMap := make(map[string]bool, len(navBuiltinKeys))
+	orderMap := make(map[string]int, len(navBuiltinKeys))
+	hasOrder := make(map[string]bool, len(navBuiltinKeys))
+	for _, key := range navBuiltinKeys {
+		enabledMap[key] = true
+	}
+
+	switch typed := raw.(type) {
+	case []interface{}:
+		fromArray = true
+		for index, entryRaw := range typed {
+			entryMap, ok := entryRaw.(map[string]interface{})
 			if !ok {
 				continue
 			}
-
-			title := normalizeSiteLocalizedField(itemMap["title"])
-			// 跳过全空标题项
-			allEmpty := true
-			for _, lang := range settingSupportedLanguages {
-				if s, _ := title[lang].(string); s != "" {
-					allEmpty = false
-					break
-				}
-			}
-			if allEmpty {
+			key := normalizeSettingText(entryMap["key"])
+			if !navBuiltinKeyAllowed(key) {
 				continue
 			}
-			// 截断标题长度
-			for _, lang := range settingSupportedLanguages {
-				if s, _ := title[lang].(string); s != "" {
-					title[lang] = normalizeSettingTextWithRuneLimit(s, settingNavCustomItemTitleMaxRuneSize)
-				}
+			if hasOrder[key] {
+				continue // 去重：保留首次出现
 			}
-
-			linkType := normalizeSettingText(itemMap["link_type"])
-			if linkType != "internal" && linkType != "external" {
-				linkType = "internal"
+			enabled := true
+			if v, exists := entryMap["enabled"]; exists {
+				enabled = parseSettingBool(v)
 			}
-
-			target := normalizeSettingText(itemMap["target"])
-			if target != "_self" && target != "_blank" {
-				target = "_self"
+			enabledMap[key] = enabled
+			order := index
+			if v, err := parseSettingInt(entryMap["sort_order"]); err == nil {
+				order = v
 			}
-
-			url := normalizeSettingTextWithRuneLimit(itemMap["url"], settingNavCustomItemURLMaxRuneSize)
-
-			sortOrder := 0
-			if v, err := parseSettingInt(itemMap["sort_order"]); err == nil {
-				sortOrder = v
-			}
-
-			icon := normalizeSettingText(itemMap["icon"])
-			if icon == "" {
-				icon = "link"
-			}
-
-			// 保留前端生成的 id
-			id := float64(0)
-			if v, ok := itemMap["id"].(float64); ok {
-				id = v
-			}
-
-			customItems = append(customItems, map[string]interface{}{
-				"id":         id,
-				"title":      title,
-				"link_type":  linkType,
-				"url":        url,
-				"target":     target,
-				"sort_order": sortOrder,
-				"enabled":    parseSettingBool(itemMap["enabled"]),
-				"icon":       icon,
-			})
-
-			if len(customItems) >= settingNavCustomItemsMaxCount {
-				break
+			orderMap[key] = order
+			hasOrder[key] = true
+		}
+	case map[string]interface{}:
+		// 旧布尔字典 {blog:true, notice:true, about:true}
+		for _, key := range navBuiltinKeys {
+			if v, exists := typed[key]; exists {
+				enabledMap[key] = parseSettingBool(v)
 			}
 		}
 	}
 
+	items = make([]map[string]interface{}, 0, len(navBuiltinKeys))
+	for defaultIndex, key := range navBuiltinKeys {
+		order := defaultIndex
+		if hasOrder[key] {
+			order = orderMap[key]
+		}
+		items = append(items, map[string]interface{}{
+			"key":        key,
+			"enabled":    enabledMap[key],
+			"sort_order": order,
+		})
+	}
+	return items, fromArray
+}
+
+// normalizeNavCustomItemsStrict 严格归一化自定义导航项（管理端写入路径）：
+// 跳过全空标题项、截断长度、字段白名单、最多 settingNavCustomItemsMaxCount 项。
+func normalizeNavCustomItemsStrict(raw interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0)
+	itemsRaw, ok := raw.([]interface{})
+	if !ok {
+		return result
+	}
+	for _, itemRaw := range itemsRaw {
+		itemMap, ok := itemRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		title := normalizeSiteLocalizedField(itemMap["title"])
+		// 跳过全空标题项
+		allEmpty := true
+		for _, lang := range settingSupportedLanguages {
+			if s, _ := title[lang].(string); s != "" {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			continue
+		}
+		// 截断标题长度
+		for _, lang := range settingSupportedLanguages {
+			if s, _ := title[lang].(string); s != "" {
+				title[lang] = normalizeSettingTextWithRuneLimit(s, settingNavCustomItemTitleMaxRuneSize)
+			}
+		}
+
+		linkType := normalizeSettingText(itemMap["link_type"])
+		if linkType != "internal" && linkType != "external" {
+			linkType = "internal"
+		}
+
+		target := normalizeSettingText(itemMap["target"])
+		if target != "_self" && target != "_blank" {
+			target = "_self"
+		}
+
+		url := normalizeSettingTextWithRuneLimit(itemMap["url"], settingNavCustomItemURLMaxRuneSize)
+
+		sortOrder := 0
+		if v, err := parseSettingInt(itemMap["sort_order"]); err == nil {
+			sortOrder = v
+		}
+
+		icon := normalizeSettingText(itemMap["icon"])
+		if icon == "" {
+			icon = "link"
+		}
+
+		// 保留前端生成的 id
+		id := float64(0)
+		if v, ok := itemMap["id"].(float64); ok {
+			id = v
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":         id,
+			"title":      title,
+			"link_type":  linkType,
+			"url":        url,
+			"target":     target,
+			"sort_order": sortOrder,
+			"enabled":    parseSettingBool(itemMap["enabled"]),
+			"icon":       icon,
+		})
+
+		if len(result) >= settingNavCustomItemsMaxCount {
+			break
+		}
+	}
+	return result
+}
+
+// normalizeNavConfig 归一化导航配置（管理端写入路径，严格）。
+// builtin 归一化为有序数组 [{key,enabled,sort_order}]（始终保留全部白名单 key，不可删除）；
+// custom_items 严格归一化；builtin 与 custom_items 共享同一全局 sort_order 空间并规整为连续 0..N。
+func normalizeNavConfig(value map[string]interface{}) models.JSON {
+	builtin, fromArray := normalizeNavBuiltinItems(value["builtin"])
+	custom := normalizeNavCustomItemsStrict(value["custom_items"])
+	if !fromArray {
+		// 旧布尔字典：内置默认序在前，自定义整体顺延其后（等价升级前视觉）
+		offsetNavCustomOrder(builtin, custom)
+	}
+	assignGlobalNavOrder(builtin, custom)
 	return models.JSON{
-		"builtin":      builtin,
-		"custom_items": customItems,
+		"builtin":      toInterfaceSlice(builtin),
+		"custom_items": toInterfaceSlice(custom),
+	}
+}
+
+// normalizeNavCustomItemsLenient 宽松归一化自定义导航项（下发层 shim）：
+// 透传既有字段、不因缺 title 丢弃（兼容经销商 {name,url} 形态），仅补齐 sort_order。
+func normalizeNavCustomItemsLenient(raw interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0)
+	itemsRaw, ok := raw.([]interface{})
+	if !ok {
+		return result
+	}
+	for _, itemRaw := range itemsRaw {
+		itemMap, ok := itemRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		item := make(map[string]interface{}, len(itemMap)+1)
+		for k, v := range itemMap {
+			item[k] = v
+		}
+		item["sort_order"] = navEntryOrder(itemMap)
+		result = append(result, item)
+	}
+	return result
+}
+
+// asStringMap 将任意 JSON 对象值（map[string]interface{} 或 models.JSON）转为 map[string]interface{}。
+func asStringMap(raw interface{}) map[string]interface{} {
+	switch typed := raw.(type) {
+	case map[string]interface{}:
+		return typed
+	case models.JSON:
+		return map[string]interface{}(typed)
+	default:
+		return map[string]interface{}{}
+	}
+}
+
+// NormalizeNavConfigForPublic 归一化下发的导航配置（下发层 shim，宽松）。
+// builtin 字典/数组均转为规范有序数组；custom_items 透传不丢弃（兼容经销商 {name,url} 形态）、
+// 补齐 sort_order；builtin 与 custom_items 共享全局 sort_order 并规整为连续 0..N。
+// 无输入时产出规范默认（3 个启用内置项 + 空自定义列表）。
+func NormalizeNavConfigForPublic(raw interface{}) models.JSON {
+	value := asStringMap(raw)
+	builtin, fromArray := normalizeNavBuiltinItems(value["builtin"])
+	custom := normalizeNavCustomItemsLenient(value["custom_items"])
+	if !fromArray {
+		offsetNavCustomOrder(builtin, custom)
+	}
+	assignGlobalNavOrder(builtin, custom)
+	return models.JSON{
+		"builtin":      toInterfaceSlice(builtin),
+		"custom_items": toInterfaceSlice(custom),
 	}
 }
 
