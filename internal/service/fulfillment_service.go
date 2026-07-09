@@ -22,6 +22,7 @@ type FulfillmentService struct {
 	orderRepo             repository.OrderRepository
 	fulfillmentRepo       repository.FulfillmentRepository
 	secretRepo            repository.CardSecretRepository
+	digitalContentRepo    repository.DigitalContentRepository
 	queueClient           *queue.Client
 	settingService        *SettingService
 	defaultEmailConfig    config.EmailConfig
@@ -39,6 +40,7 @@ func NewFulfillmentService(
 	orderRepo repository.OrderRepository,
 	fulfillmentRepo repository.FulfillmentRepository,
 	secretRepo repository.CardSecretRepository,
+	digitalContentRepo repository.DigitalContentRepository,
 	queueClient *queue.Client,
 	settingService *SettingService,
 	defaultEmailConfig config.EmailConfig,
@@ -48,6 +50,7 @@ func NewFulfillmentService(
 		orderRepo:             orderRepo,
 		fulfillmentRepo:       fulfillmentRepo,
 		secretRepo:            secretRepo,
+		digitalContentRepo:    digitalContentRepo,
 		queueClient:           queueClient,
 		settingService:        settingService,
 		defaultEmailConfig:    defaultEmailConfig,
@@ -211,7 +214,8 @@ func (s *FulfillmentService) CreateAuto(orderID uint) (*models.Fulfillment, erro
 	}
 
 	for _, item := range order.Items {
-		if strings.TrimSpace(item.FulfillmentType) != constants.FulfillmentTypeAuto {
+		ft := strings.TrimSpace(item.FulfillmentType)
+		if ft != constants.FulfillmentTypeAuto && ft != constants.FulfillmentTypeDigitalContent {
 			return nil, ErrFulfillmentNotAuto
 		}
 	}
@@ -239,9 +243,25 @@ func (s *FulfillmentService) CreateAuto(orderID uint) (*models.Fulfillment, erro
 			reservedByKey[key] = append(reservedByKey[key], reserved)
 		}
 		var secrets []models.CardSecret
+		digitalLines := make([]string, 0)
 		for _, item := range order.Items {
 			if item.ProductID == 0 || item.Quantity <= 0 {
 				return ErrFulfillmentInvalid
+			}
+			// 数字内容：读取可复用内容（SKU 级优先，回退商品级），不消耗卡密与内容本身
+			if strings.TrimSpace(item.FulfillmentType) == constants.FulfillmentTypeDigitalContent {
+				if s.digitalContentRepo == nil {
+					return ErrFulfillmentCreateFailed
+				}
+				content, err := s.digitalContentRepo.FindContentByProductSKU(item.ProductID, item.SKUID)
+				if err != nil {
+					return err
+				}
+				if strings.TrimSpace(content) == "" {
+					return ErrDigitalContentNotFound
+				}
+				digitalLines = append(digitalLines, content)
+				continue
 			}
 			key := buildOrderItemKey(item.ProductID, item.SKUID)
 			cachedReserved := reservedByKey[key]
@@ -276,15 +296,17 @@ func (s *FulfillmentService) CreateAuto(orderID uint) (*models.Fulfillment, erro
 			secretLines = append(secretLines, secret.Secret)
 		}
 
-		affected, err := secretRepo.MarkUsed(ids, orderID, now)
-		if err != nil {
-			return err
-		}
-		if int(affected) != len(ids) {
-			return ErrCardSecretInsufficient
+		if len(ids) > 0 {
+			affected, err := secretRepo.MarkUsed(ids, orderID, now)
+			if err != nil {
+				return err
+			}
+			if int(affected) != len(ids) {
+				return ErrCardSecretInsufficient
+			}
 		}
 
-		payload := strings.Join(secretLines, "\n")
+		payload := strings.Join(append(secretLines, digitalLines...), "\n")
 		fulfillment = &models.Fulfillment{
 			OrderID:     orderID,
 			Type:        constants.FulfillmentTypeAuto,

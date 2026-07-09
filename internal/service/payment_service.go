@@ -877,7 +877,8 @@ func shouldAutoFulfill(order *models.Order) bool {
 		return false
 	}
 	for _, item := range order.Items {
-		if strings.TrimSpace(item.FulfillmentType) != constants.FulfillmentTypeAuto {
+		ft := strings.TrimSpace(item.FulfillmentType)
+		if ft != constants.FulfillmentTypeAuto && ft != constants.FulfillmentTypeDigitalContent {
 			return false
 		}
 	}

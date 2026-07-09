@@ -28,6 +28,7 @@ type Container struct {
 	PaymentChannelRepo         repository.PaymentChannelRepository
 	CardSecretRepo             repository.CardSecretRepository
 	CardSecretBatchRepo        repository.CardSecretBatchRepository
+	DigitalContentRepo         repository.DigitalContentRepository
 	GiftCardRepo               repository.GiftCardRepository
 	FulfillmentRepo            repository.FulfillmentRepository
 	ProductRepo                repository.ProductRepository
@@ -91,6 +92,7 @@ type Container struct {
 	BannerService                 *service.BannerService
 	PaymentService                *service.PaymentService
 	CardSecretService             *service.CardSecretService
+	DigitalContentService         *service.DigitalContentService
 	GiftCardService               *service.GiftCardService
 	UserLoginLogService           *service.UserLoginLogService
 	AuthzAuditService             *service.AuthzAuditService
@@ -187,6 +189,7 @@ func (c *Container) initRepositories() {
 	c.PaymentChannelRepo = repository.NewPaymentChannelRepository(db)
 	c.CardSecretRepo = repository.NewCardSecretRepository(db)
 	c.CardSecretBatchRepo = repository.NewCardSecretBatchRepository(db)
+	c.DigitalContentRepo = repository.NewDigitalContentRepository(db)
 	c.GiftCardRepo = repository.NewGiftCardRepository(db)
 	c.FulfillmentRepo = repository.NewFulfillmentRepository(db)
 	c.ProductRepo = repository.NewProductRepository(db)
@@ -314,11 +317,12 @@ func (c *Container) initServices() {
 		ExpireMinutes:             c.Config.Order.PaymentExpireMinutes,
 	})
 	c.FulfillmentService = service.NewFulfillmentService(
-		c.OrderRepo, c.FulfillmentRepo, c.CardSecretRepo, c.QueueClient,
+		c.OrderRepo, c.FulfillmentRepo, c.CardSecretRepo, c.DigitalContentRepo, c.QueueClient,
 		c.SettingService, c.Config.Email,
 		c.UserOAuthIdentityRepo,
 	)
 	c.CardSecretService = service.NewCardSecretService(c.CardSecretRepo, c.CardSecretBatchRepo, c.ProductRepo, c.ProductSKURepo)
+	c.DigitalContentService = service.NewDigitalContentService(c.DigitalContentRepo, c.CardSecretRepo, c.ProductRepo)
 	c.GiftCardService = service.NewGiftCardService(c.GiftCardRepo, c.UserRepo, c.WalletService, c.SettingService)
 	c.CouponAdminService = service.NewCouponAdminService(c.CouponRepo)
 	c.PromotionAdminService = service.NewPromotionAdminService(c.PromotionRepo)

@@ -765,7 +765,7 @@ func (h *Handler) decorateProductStock(product *models.Product, item *publicProd
 		return
 	}
 
-	if fulfillmentType == constants.FulfillmentTypeManual {
+	if constants.UsesManualStock(fulfillmentType) {
 		hasActiveSKU := false
 		hasUnlimitedSKU := false
 		skuRemaining := 0

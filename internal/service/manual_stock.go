@@ -22,7 +22,7 @@ func summarizeManualStockItems(items []models.OrderItem) manualStockSummary {
 		ByLegacyProduct: make(map[uint]int),
 	}
 	for _, item := range items {
-		if strings.TrimSpace(item.FulfillmentType) != constants.FulfillmentTypeManual {
+		if !constants.UsesManualStock(strings.TrimSpace(item.FulfillmentType)) {
 			continue
 		}
 		if item.ProductID == 0 || item.Quantity <= 0 {

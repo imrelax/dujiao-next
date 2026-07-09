@@ -597,7 +597,7 @@ func (s *OrderService) createOrder(input orderCreateParams) (*models.Order, erro
 					return ErrCardSecretInsufficient
 				}
 			}
-			if strings.TrimSpace(plan.Item.FulfillmentType) == constants.FulfillmentTypeManual &&
+			if constants.UsesManualStock(strings.TrimSpace(plan.Item.FulfillmentType)) &&
 				plan.SKU != nil &&
 				shouldEnforceManualSKUStock(plan.Product, plan.SKU) {
 				affected, err := productSKURepo.ReserveManualStock(plan.Item.SKUID, plan.Item.Quantity)

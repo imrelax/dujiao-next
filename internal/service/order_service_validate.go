@@ -179,10 +179,11 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		if fulfillmentType == "" {
 			fulfillmentType = constants.FulfillmentTypeManual
 		}
-		if fulfillmentType != constants.FulfillmentTypeManual && fulfillmentType != constants.FulfillmentTypeAuto && fulfillmentType != constants.FulfillmentTypeUpstream {
+		if fulfillmentType != constants.FulfillmentTypeManual && fulfillmentType != constants.FulfillmentTypeAuto &&
+			fulfillmentType != constants.FulfillmentTypeUpstream && fulfillmentType != constants.FulfillmentTypeDigitalContent {
 			return nil, ErrFulfillmentInvalid
 		}
-		if fulfillmentType == constants.FulfillmentTypeManual &&
+		if constants.UsesManualStock(fulfillmentType) &&
 			shouldEnforceManualSKUStock(product, sku) &&
 			manualSKUAvailable(sku) < item.Quantity {
 			return nil, ErrManualStockInsufficient

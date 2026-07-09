@@ -911,8 +911,8 @@ func (h *Handler) toUpstreamProductWithMemberPrice(p models.Product, memberLevel
 
 // computeSKUStock 计算 SKU 的库存状态和实际可用量
 func computeSKUStock(p models.Product, s models.ProductSKU) (status string, quantity int) {
-	if p.FulfillmentType == constants.FulfillmentTypeManual {
-		// 手动交付：根据 SKU 级别手动库存判断
+	if constants.UsesManualStock(p.FulfillmentType) {
+		// 手动交付 / 数字内容：根据 SKU 级别手动库存判断
 		skuTotal := s.ManualStockTotal
 		if skuTotal == constants.ManualStockUnlimited {
 			return constants.ProductStockStatusUnlimited, -1

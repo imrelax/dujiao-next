@@ -104,6 +104,7 @@ func TestCreateAutoFulfillmentRespectsSKUBoundary(t *testing.T) {
 		repository.NewOrderRepository(db),
 		repository.NewFulfillmentRepository(db),
 		repository.NewCardSecretRepository(db),
+		nil,
 		nil, nil, config.EmailConfig{}, nil,
 	)
 

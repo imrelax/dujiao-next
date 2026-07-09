@@ -22,12 +22,25 @@ const (
 
 // 交付类型与状态常量
 const (
-	FulfillmentTypeAuto        = "auto"
-	FulfillmentTypeManual      = "manual"
-	FulfillmentTypeUpstream    = "upstream"
-	FulfillmentStatusPending   = "pending"
-	FulfillmentStatusDelivered = "delivered"
+	FulfillmentTypeAuto           = "auto"
+	FulfillmentTypeManual         = "manual"
+	FulfillmentTypeUpstream       = "upstream"
+	FulfillmentTypeDigitalContent = "digital_content"
+	FulfillmentStatusPending      = "pending"
+	FulfillmentStatusDelivered    = "delivered"
 )
+
+// UsesManualStock 判断交付类型是否按 manual 口径管理库存。
+// manual 与 digital_content 同构：均使用商品/SKU 的 manual_stock_total 作为销售上限，
+// -1 表示不限。用于统一"库存判断点"，避免为 digital_content 新增专属分支。
+func UsesManualStock(fulfillmentType string) bool {
+	switch fulfillmentType {
+	case FulfillmentTypeManual, FulfillmentTypeDigitalContent:
+		return true
+	default:
+		return false
+	}
+}
 
 // 支付状态常量
 const (
