@@ -18,3 +18,15 @@ internal/web/dist/
 # CI workflow 跨仓库 checkout 的前端源码（fullstack 构建用，不进 git 历史）
 admin-src/
 user-src/
+
+# Go 编译产物（不进 git）
+dujiao-api
+server
+
+# 测试数据生成器（不进 git）
+cmd/seeddata/
+
+# 临时测试/补丁脚本
+test_apis.go
+test_apis.sh
+patch_seeddata.py

@@ -65,13 +65,14 @@ type AnalyticsRepurchaseRow struct {
 }
 
 // AnalyticsChurnRiskRow 流失预警用户
+// 注意：SQLite 子查询返回 datetime 为字符串
 type AnalyticsChurnRiskRow struct {
-	UserID        uint      `gorm:"column:user_id"`
-	Email         string    `gorm:"column:email"`
-	MemberLevelID uint      `gorm:"column:member_level_id"`
-	LastOrderAt   time.Time `gorm:"column:last_order_at"`
-	LifetimeValue float64   `gorm:"column:lifetime_value"`
-	TotalOrders   int64     `gorm:"column:total_orders"`
+	UserID        uint    `gorm:"column:user_id"`
+	Email         string  `gorm:"column:email"`
+	MemberLevelID uint    `gorm:"column:member_level_id"`
+	LastOrderAt   string  `gorm:"column:last_order_at"`
+	LifetimeValue float64 `gorm:"column:lifetime_value"`
+	TotalOrders   int64   `gorm:"column:total_orders"`
 }
 
 // ---- 商品分析 ----
@@ -152,10 +153,11 @@ type AnalyticsUserGrowthRow struct {
 
 // AnalyticsActivationCohortRow 激活转化队列原始行
 // 返回 user_id + 注册时间 + 首购时间，Go 端计算天数差
+// 注意：SQLite 子查询返回 datetime 为字符串，使用 string 扫描后 Go 端解析
 type AnalyticsActivationCohortRow struct {
-	UserID        uint      `gorm:"column:user_id"`
-	RegisteredAt  time.Time `gorm:"column:registered_at"`
-	FirstOrderAt  *time.Time `gorm:"column:first_order_at"`
+	UserID        uint   `gorm:"column:user_id"`
+	RegisteredAt  string `gorm:"column:registered_at"`
+	FirstOrderAt  *string `gorm:"column:first_order_at"`
 }
 
 // AnalyticsDAURow 日活跃用户
@@ -320,19 +322,27 @@ func (r *GormAnalyticsRepository) GetChurnRiskUsers(cutoffTime time.Time, minLTV
 		constants.OrderStatusPartiallyDelivered, constants.OrderStatusPartiallyRefunded,
 		constants.OrderStatusDelivered, constants.OrderStatusCompleted}
 
-	subQuery := r.db.Model(&models.Order{}).
-		Select("user_id, MAX(created_at) AS last_order_at, SUM(total_amount) AS lifetime_value, COUNT(id) AS total_orders").
-		Where("parent_id IS NULL AND status IN ?", paidStatuses).
-		Group("user_id").
-		Having("SUM(total_amount) > ? AND MAX(created_at) < ?", minLTV, cutoffTime)
+	// 使用 Raw SQL 避免 SQLite 子查询 datetime 扫描问题
+	sql := `
+		SELECT u.id AS user_id, u.email, u.member_level_id, oa.last_order_at, oa.lifetime_value, oa.total_orders
+		FROM users u
+		JOIN (
+			SELECT user_id, MAX(created_at) AS last_order_at, SUM(total_amount) AS lifetime_value, COUNT(id) AS total_orders
+			FROM orders
+			WHERE parent_id IS NULL AND status IN (?,?,?,?,?,?) AND deleted_at IS NULL
+			GROUP BY user_id
+			HAVING SUM(total_amount) > ? AND MAX(created_at) < ?
+		) oa ON oa.user_id = u.id
+		WHERE u.deleted_at IS NULL
+		ORDER BY oa.lifetime_value DESC
+		LIMIT ?
+	`
 
-	if err := r.db.Table("(?) AS oa", subQuery).
-		Select("u.id AS user_id, u.email, u.member_level_id, oa.last_order_at, oa.lifetime_value, oa.total_orders").
-		Joins("JOIN users u ON u.id = oa.user_id").
-		Where("u.deleted_at IS NULL").
-		Order("oa.lifetime_value DESC").
-		Limit(limit).
-		Scan(&rows).Error; err != nil {
+	if err := r.db.Raw(sql,
+		paidStatuses[0], paidStatuses[1], paidStatuses[2], paidStatuses[3],
+		paidStatuses[4], paidStatuses[5],
+		minLTV, cutoffTime, limit,
+	).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -591,24 +601,25 @@ func (r *GormAnalyticsRepository) GetUserGrowth(startAt, endAt time.Time, loc *t
 
 // GetActivationCohort 获取激活转化队列原始数据
 // 返回 user_id + 注册时间 + 首购时间，service 层计算天数差和分类统计
+// 注意：使用 Raw SQL 避免 GORM Model+子查询+Joins 在双数据库下的列别名冲突
 func (r *GormAnalyticsRepository) GetActivationCohort(startAt, endAt time.Time) ([]AnalyticsActivationCohortRow, error) {
 	rows := make([]AnalyticsActivationCohortRow, 0)
 
-	// 子查询：每个用户的首购时间
-	firstOrderSub := r.db.Model(&models.Order{}).
-		Select("user_id, MIN(created_at) AS first_order_at").
-		Where("parent_id IS NULL AND status IN ?", []string{
-			constants.OrderStatusPaid, constants.OrderStatusFulfilling,
-			constants.OrderStatusPartiallyDelivered, constants.OrderStatusPartiallyRefunded,
-			constants.OrderStatusDelivered, constants.OrderStatusCompleted,
-		}).
-		Group("user_id")
+	sql := `
+		SELECT u.id AS user_id, u.created_at AS registered_at, fo.first_order_at
+		FROM users u
+		LEFT JOIN (
+			SELECT user_id, MIN(created_at) AS first_order_at
+			FROM orders
+			WHERE parent_id IS NULL
+			  AND status IN ('paid','fulfilling','partially_delivered','partially_refunded','delivered','completed')
+			  AND deleted_at IS NULL
+			GROUP BY user_id
+		) fo ON fo.user_id = u.id
+		WHERE u.created_at >= ? AND u.created_at < ? AND u.deleted_at IS NULL
+	`
 
-	if err := r.db.Model(&models.User{}).
-		Select("users.id AS user_id, users.created_at AS registered_at, fo.first_order_at").
-		Joins("LEFT JOIN (?) AS fo ON fo.user_id = users.id", firstOrderSub).
-		Where("users.created_at >= ? AND users.created_at < ?", startAt, endAt).
-		Scan(&rows).Error; err != nil {
+	if err := r.db.Raw(sql, startAt, endAt).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil

@@ -229,7 +229,7 @@ func (s *AnalyticsService) GetChurnRiskUsers(ctx context.Context, input Analytic
 			UserID:        row.UserID,
 			Email:         row.Email,
 			MemberLevelID: row.MemberLevelID,
-			LastOrderAt:   row.LastOrderAt.Format(time.RFC3339),
+			LastOrderAt:   row.LastOrderAt,
 			LifetimeValue: row.LifetimeValue,
 			TotalOrders:   row.TotalOrders,
 		})
@@ -709,14 +709,22 @@ func (s *AnalyticsService) GetActivationFunnel(ctx context.Context, input Analyt
 		return nil, err
 	}
 
-	// Go 端计算天数差并分类统计
+	// Go 端计算天数差并分类统计（SQLite 子查询返回字符串，需解析）
 	var cohortSize, activated1D, activated7D, activated30D int64
 	cohortSize = int64(len(rows))
 	for _, row := range rows {
-		if row.FirstOrderAt == nil {
+		registeredAt, err := time.Parse("2006-01-02 15:04:05", parseSQLiteTime(row.RegisteredAt))
+		if err != nil {
 			continue
 		}
-		daysDiff := row.FirstOrderAt.Sub(row.RegisteredAt).Hours() / 24
+		if row.FirstOrderAt == nil || *row.FirstOrderAt == "" {
+			continue
+		}
+		firstOrderAt, err := time.Parse("2006-01-02 15:04:05", parseSQLiteTime(*row.FirstOrderAt))
+		if err != nil {
+			continue
+		}
+		daysDiff := firstOrderAt.Sub(registeredAt).Hours() / 24
 		if daysDiff <= 1 {
 			activated1D++
 		}
@@ -820,4 +828,21 @@ func parseAnalyticsLocation(tz string) *time.Location {
 		return time.Local
 	}
 	return loc
+}
+
+// parseSQLiteTime 规范化 SQLite 子查询返回的 datetime 字符串
+// SQLite 可能返回 "2026-07-09 16:48:48" 或 "2026-07-09T16:48:48Z" 等格式
+func parseSQLiteTime(s string) string {
+	// 截取前 19 个字符（标准 datetime 格式）
+	if len(s) >= 19 {
+		s = s[:19]
+	}
+	// 将 T 替换为空格
+	for i, c := range s {
+		if c == 'T' {
+			s = s[:i] + " " + s[i+1:]
+			break
+		}
+	}
+	return s
 }
