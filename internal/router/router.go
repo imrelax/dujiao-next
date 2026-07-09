@@ -301,6 +301,23 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 				authorized.GET("/dashboard/rankings", adminHandler.GetDashboardRankings)
 				authorized.GET("/dashboard/inventory-alerts", adminHandler.GetDashboardInventoryAlerts)
 
+				// 数据分析
+				authorized.GET("/analytics/customer/ltv", adminHandler.GetCustomerLTV)
+				authorized.GET("/analytics/customer/arpu", adminHandler.GetARPUSeries)
+				authorized.GET("/analytics/customer/repurchase", adminHandler.GetRepurchaseRate)
+				authorized.GET("/analytics/customer/churn", adminHandler.GetChurnRiskUsers)
+				authorized.GET("/analytics/product/funnel", adminHandler.GetProductFunnel)
+				authorized.GET("/analytics/product/refund", adminHandler.GetRefundRanking)
+				authorized.GET("/analytics/product/cross-sell", adminHandler.GetCrossSell)
+				authorized.GET("/analytics/product/price-band", adminHandler.GetPriceBandDistribution)
+				authorized.GET("/analytics/revenue/channel", adminHandler.GetRevenueByChannel)
+				authorized.GET("/analytics/revenue/level", adminHandler.GetRevenueByMemberLevel)
+				authorized.GET("/analytics/revenue/category", adminHandler.GetRevenueByCategory)
+				authorized.GET("/analytics/revenue/heatmap", adminHandler.GetRevenueHeatmap)
+				authorized.GET("/analytics/user/growth", adminHandler.GetUserGrowth)
+				authorized.GET("/analytics/user/activation", adminHandler.GetActivationFunnel)
+				authorized.GET("/analytics/user/dau", adminHandler.GetDAUTrend)
+
 				// 广告代理
 				authorized.GET("/ads/render/:slotCode", adminHandler.GetAdRender)
 				authorized.POST("/ads/impression", adminHandler.PostAdImpression)

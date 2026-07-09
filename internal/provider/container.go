@@ -65,6 +65,7 @@ type Container struct {
 	MemberLevelPriceRepo       repository.MemberLevelPriceRepository
 	MediaRepo                  repository.MediaRepository
 	PostCategoryRepo           repository.PostCategoryRepository
+	AnalyticsRepo              repository.AnalyticsRepository
 
 	// Services
 	AuthzService                  *authz.Service
@@ -118,6 +119,7 @@ type Container struct {
 	AdProxyService                *service.AdProxyService
 	MediaService                  *service.MediaService
 	PostCategoryService           *service.PostCategoryService
+	AnalyticsService              *service.AnalyticsService
 	OrderRiskControlService       *service.OrderRiskControlService
 	ComplianceService             *service.ComplianceService
 
@@ -224,6 +226,7 @@ func (c *Container) initRepositories() {
 	c.MemberLevelPriceRepo = repository.NewMemberLevelPriceRepository(db)
 	c.MediaRepo = repository.NewMediaRepository(db)
 	c.PostCategoryRepo = repository.NewPostCategoryRepository(db)
+	c.AnalyticsRepo = repository.NewAnalyticsRepository(db)
 }
 
 func (c *Container) initServices() {
@@ -283,6 +286,7 @@ func (c *Container) initServices() {
 	c.ProductService = service.NewProductService(c.ProductRepo, c.ProductSKURepo, c.CardSecretRepo, c.CardSecretBatchRepo, c.CategoryRepo, c.MemberLevelPriceRepo, c.CartRepo, c.ProductMappingRepo, c.OrderRepo, c.PaymentChannelRepo)
 	c.PostService = service.NewPostService(c.PostRepo, c.PostCategoryRepo)
 	c.PostCategoryService = service.NewPostCategoryService(c.PostCategoryRepo)
+	c.AnalyticsService = service.NewAnalyticsService(c.AnalyticsRepo)
 	c.CategoryService = service.NewCategoryService(c.CategoryRepo)
 	c.SitemapService = service.NewSitemapService(c.ProductRepo, c.CategoryRepo, c.PostRepo)
 	c.CartService = service.NewCartService(c.CartRepo, c.ProductRepo, c.ProductSKURepo, c.PromotionRepo, c.SettingService)

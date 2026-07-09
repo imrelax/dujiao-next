@@ -145,7 +145,97 @@ func dateGroupExpr(db *gorm.DB, column string, loc *time.Location, refTime time.
 	}
 }
 
-// quotedStatusList 将状态常量数组拼接为 SQL IN 子句所需的带引号逗号分隔列表。
+// monthGroupExpr 构建 SQL 月份分组表达式（YYYY-MM），兼容 sqlite 与 postgres。
+func monthGroupExpr(db *gorm.DB, column string, loc *time.Location, refTime time.Time) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	dialect := dbDialectName(db)
+	switch dialect {
+	case "postgres", "postgresql":
+		zoneName := loc.String()
+		if zoneName == "" || zoneName == "Local" {
+			zoneName = "UTC"
+		}
+		return fmt.Sprintf("TO_CHAR(%s AT TIME ZONE '%s', 'YYYY-MM')", column, zoneName)
+	default: // sqlite
+		_, offset := refTime.In(loc).Zone()
+		sign := "+"
+		if offset < 0 {
+			sign = "-"
+			offset = -offset
+		}
+		hours := offset / 3600
+		minutes := (offset % 3600) / 60
+		if minutes != 0 {
+			return fmt.Sprintf("strftime('%%Y-%%m', %s, '%s%d hours', '%s%d minutes')", column, sign, hours, sign, minutes)
+		}
+		return fmt.Sprintf("strftime('%%Y-%%m', %s, '%s%d hours')", column, sign, hours)
+	}
+}
+
+// dayOfWeekExpr 构建 SQL 星期几表达式（0=周日, 6=周六），兼容 sqlite 与 postgres。
+func dayOfWeekExpr(db *gorm.DB, column string, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	dialect := dbDialectName(db)
+	switch dialect {
+	case "postgres", "postgresql":
+		zoneName := loc.String()
+		if zoneName == "" || zoneName == "Local" {
+			zoneName = "UTC"
+		}
+		return fmt.Sprintf("EXTRACT(DOW FROM %s AT TIME ZONE '%s')", column, zoneName)
+	default: // sqlite
+		_, offset := refTimeZeroDayOfWeek(loc).Zone()
+		sign := "+"
+		if offset < 0 {
+			sign = "-"
+			offset = -offset
+		}
+		hours := offset / 3600
+		minutes := (offset % 3600) / 60
+		if minutes != 0 {
+			return fmt.Sprintf("CAST(strftime('%%w', %s, '%s%d hours', '%s%d minutes') AS INTEGER)", column, sign, hours, sign, minutes)
+		}
+		return fmt.Sprintf("CAST(strftime('%%w', %s, '%s%d hours') AS INTEGER)", column, sign, hours)
+	}
+}
+
+// hourExpr 构建 SQL 小时表达式（0-23），兼容 sqlite 与 postgres。
+func hourExpr(db *gorm.DB, column string, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	dialect := dbDialectName(db)
+	switch dialect {
+	case "postgres", "postgresql":
+		zoneName := loc.String()
+		if zoneName == "" || zoneName == "Local" {
+			zoneName = "UTC"
+		}
+		return fmt.Sprintf("EXTRACT(HOUR FROM %s AT TIME ZONE '%s')", column, zoneName)
+	default: // sqlite
+		_, offset := refTimeZeroDayOfWeek(loc).Zone()
+		sign := "+"
+		if offset < 0 {
+			sign = "-"
+			offset = -offset
+		}
+		hours := offset / 3600
+		minutes := (offset % 3600) / 60
+		if minutes != 0 {
+			return fmt.Sprintf("CAST(strftime('%%H', %s, '%s%d hours', '%s%d minutes') AS INTEGER)", column, sign, hours, sign, minutes)
+		}
+		return fmt.Sprintf("CAST(strftime('%%H', %s, '%s%d hours') AS INTEGER)", column, sign, hours)
+	}
+}
+
+// refTimeZeroDayOfWeek 返回用于 SQLite 时区偏移计算的参考时间。
+func refTimeZeroDayOfWeek(loc *time.Location) time.Time {
+	return time.Date(2024, 1, 7, 0, 0, 0, 0, loc)
+}
 // 仅用于内部常量值，不可用于用户输入。
 func quotedStatusList(statuses []string) string {
 	parts := make([]string, len(statuses))
