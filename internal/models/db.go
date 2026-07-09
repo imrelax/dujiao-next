@@ -135,8 +135,6 @@ func AutoMigrate() error {
 		&Payment{},
 		&CardSecret{},
 		&CardSecretBatch{},
-		&DigitalContent{},
-		&DigitalContentBinding{},
 		&GiftCard{},
 		&GiftCardBatch{},
 		&Fulfillment{},
