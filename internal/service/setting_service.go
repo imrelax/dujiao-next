@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/mail"
 	"strings"
 	"time"
@@ -463,4 +464,35 @@ func (s *SettingService) GetWalletRechargeChannelIDs() []uint {
 		return nil
 	}
 	return result
+}
+
+// AIConfig AI 接口配置。
+type AIConfig struct {
+	APIUrl       string `json:"api_url"`
+	ModelID      string `json:"model_id"`
+	APIToken     string `json:"api_token"`
+	SystemPrompt string `json:"system_prompt"`
+}
+
+// GetAIConfig 获取 AI 接口配置。
+func (s *SettingService) GetAIConfig() (*AIConfig, error) {
+	setting, err := s.repo.GetByKey(constants.SettingKeyAIConfig)
+	if err != nil {
+		return nil, err
+	}
+	if setting == nil {
+		return nil, fmt.Errorf("ai_config not found")
+	}
+	var cfg AIConfig
+	raw, err := json.Marshal(setting.ValueJSON)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.APIUrl == "" || cfg.APIToken == "" {
+		return nil, fmt.Errorf("ai_config incomplete")
+	}
+	return &cfg, nil
 }

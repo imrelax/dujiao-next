@@ -1,9 +1,15 @@
 package admin
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/http/handlers/shared"
@@ -669,4 +675,219 @@ func (h *Handler) DeleteProduct(c *gin.Context) {
 	}
 
 	response.Success(c, nil)
+}
+
+// AIProductSEORequest AI SEO 生成请求。
+type AIProductSEORequest struct {
+	Fields                  []string               `json:"fields"`
+	Languages               []string               `json:"languages"`
+	CategoryName            string                 `json:"category_name"`
+	CurrentTitle            map[string]interface{} `json:"current_title"`
+	CurrentSlug             string                 `json:"current_slug"`
+	CurrentMetaKeywords     map[string]interface{} `json:"current_meta_keywords"`
+	CurrentMetaDescription  map[string]interface{} `json:"current_meta_description"`
+	CurrentDescription      map[string]interface{} `json:"current_description"`
+}
+
+type aiChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type aiChatRequest struct {
+	Model    string          `json:"model"`
+	Messages []aiChatMessage `json:"messages"`
+}
+
+type aiChatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+const defaultAISystemPrompt = "你是一个专业的电商 SEO 优化专家，请根据用户提供的商品信息，为指定的字段和语言生成优化后的内容。"
+
+// truncateMetaDescription 截断 meta_description 到 160 字符以内（作为兜底）。
+func truncateMetaDescription(result map[string]interface{}, languages []string) {
+	descRaw, ok := result["meta_description"]
+	if !ok {
+		return
+	}
+	descMap, ok := descRaw.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for _, lang := range languages {
+		val, ok := descMap[lang]
+		if !ok {
+			continue
+		}
+		str, ok := val.(string)
+		if !ok {
+			continue
+		}
+		runes := []rune(str)
+		if len(runes) > 160 {
+			descMap[lang] = string(runes[:160])
+		}
+	}
+}
+
+// AIProductSEO 调用 AI 接口为商品生成 SEO 内容。
+func (h *Handler) AIProductSEO(c *gin.Context) {
+	var req AIProductSEORequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		shared.RespondBindError(c, err)
+		return
+	}
+
+	cfg, err := h.SettingService.GetAIConfig()
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.ai_config_not_found", err)
+		return
+	}
+
+	systemPrompt := cfg.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = defaultAISystemPrompt
+	}
+
+	userPrompt := buildAIProductSEOPrompt(req)
+	aiReqBody := aiChatRequest{
+		Model: cfg.ModelID,
+		Messages: []aiChatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+	}
+	reqBytes, err := json.Marshal(aiReqBody)
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_parse_failed", err)
+		return
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, cfg.APIUrl, bytes.NewReader(reqBytes))
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_connection_failed", err)
+		return
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+cfg.APIToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_connection_failed", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_api_error", fmt.Errorf("AI API returned status %d", resp.StatusCode))
+		return
+	}
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_connection_failed", err)
+		return
+	}
+
+	var aiResp aiChatResponse
+	if err := json.Unmarshal(respBytes, &aiResp); err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_parse_failed", err)
+		return
+	}
+	if len(aiResp.Choices) == 0 {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_parse_failed", fmt.Errorf("empty AI response"))
+		return
+	}
+
+	content := strings.TrimSpace(aiResp.Choices[0].Message.Content)
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.ai_seo_parse_failed", err)
+		return
+	}
+
+	// 对 meta_description 做 160 字符兜底截断
+	truncateMetaDescription(result, req.Languages)
+
+	// 仅返回请求的字段和语言
+	filtered := filterAIProductSEOResult(result, req.Fields, req.Languages)
+	response.Success(c, filtered)
+}
+
+func buildAIProductSEOPrompt(req AIProductSEORequest) string {
+	var sb strings.Builder
+	sb.WriteString("请为以下商品优化 SEO 内容。\n\n")
+
+	sb.WriteString(fmt.Sprintf("需要优化的字段: %s\n", strings.Join(req.Fields, ", ")))
+	sb.WriteString(fmt.Sprintf("目标语言: %s\n\n", strings.Join(req.Languages, ", ")))
+
+	if req.CategoryName != "" {
+		sb.WriteString(fmt.Sprintf("商品分类: %s\n", req.CategoryName))
+	}
+
+	sb.WriteString("当前内容:\n")
+	for _, field := range req.Fields {
+		switch field {
+		case "title":
+			sb.WriteString(fmt.Sprintf("- 标题: %v\n", req.CurrentTitle))
+		case "slug":
+			sb.WriteString(fmt.Sprintf("- Slug: %s\n", req.CurrentSlug))
+		case "meta_keywords":
+			sb.WriteString(fmt.Sprintf("- Meta Keywords: %v\n", req.CurrentMetaKeywords))
+		case "meta_description":
+			sb.WriteString(fmt.Sprintf("- Meta Description: %v\n", req.CurrentMetaDescription))
+			sb.WriteString("生成的 Meta Description 请严格控制在 160 个字符以内\n")
+		case "description":
+			sb.WriteString(fmt.Sprintf("- 描述: %v\n", req.CurrentDescription))
+		}
+	}
+
+	sb.WriteString("\n请为每个目标语言生成对应字段的优化内容，以 JSON 格式返回。")
+
+	return sb.String()
+}
+
+func filterAIProductSEOResult(result map[string]interface{}, fields, languages []string) map[string]interface{} {
+	filtered := make(map[string]interface{})
+	fieldSet := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		fieldSet[f] = true
+	}
+	langSet := make(map[string]bool, len(languages))
+	for _, l := range languages {
+		langSet[l] = true
+	}
+	for _, field := range fields {
+		raw, ok := result[field]
+		if !ok {
+			continue
+		}
+		if field == "slug" {
+			if slug, ok := raw.(string); ok {
+				filtered[field] = slug
+			}
+			continue
+		}
+		fieldMap, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		langResult := make(map[string]interface{})
+		for _, lang := range languages {
+			if val, ok := fieldMap[lang]; ok {
+				langResult[lang] = val
+			}
+		}
+		if len(langResult) > 0 {
+			filtered[field] = langResult
+		}
+	}
+	return filtered
 }

@@ -479,6 +479,8 @@ const (
 
 	SettingKeyCallbackRoutesConfig = "callback_routes_config"
 
+	SettingKeyAIConfig          = "ai_config"
+
 	SettingKeyHomeAnnouncement   = "home_announcement"
 	SettingFieldPaymentCallback  = "payment_callback"
 	SettingFieldDujiaoPayWebhook = "dujiaopay_webhook"

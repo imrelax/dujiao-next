@@ -316,6 +316,7 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 				authorized.POST("/products/batch-status", adminHandler.BatchUpdateProductStatus)
 				authorized.POST("/products/batch-category", adminHandler.BatchUpdateProductCategory)
 				authorized.POST("/products/batch-delete", adminHandler.BatchDeleteProducts)
+				authorized.POST("/products/ai-seo", adminHandler.AIProductSEO)
 
 				// 文章管理
 				authorized.GET("/posts", adminHandler.GetAdminPosts)

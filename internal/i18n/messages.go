@@ -341,6 +341,11 @@ var messages = map[string]map[string]string{
 		"error.totp_cannot_reset_self":           "无法通过此入口重置自己的 2FA，请使用 admin-tool CLI",
 		"error.invalid_upstream_status":          "无效的上游状态参数",
 		"error.invalid_product_status":           "无效的商品状态参数",
+		"error.ai_config_not_found":              "AI 接口未配置，请在系统设置中完成配置",
+		"error.ai_seo_connection_failed":         "AI 接口连接失败，请检查 API 地址和网络",
+		"error.ai_seo_api_error":                 "AI 接口返回错误，请检查 Token 和模型配置",
+		"error.ai_seo_parse_failed":              "AI 返回内容解析失败，请重试或调整提示词",
+		"success.ai_seo_generated":               "AI SEO 内容生成成功",
 	},
 	LocaleTW: {
 		"error.jwt_secret_missing":                       "JWT secret 未配置",
@@ -668,6 +673,11 @@ var messages = map[string]map[string]string{
 		"error.totp_cannot_reset_self":           "無法透過此入口重設自己的 2FA，請使用 admin-tool CLI",
 		"error.invalid_upstream_status":          "無效的上游狀態參數",
 		"error.invalid_product_status":           "無效的商品狀態參數",
+		"error.ai_config_not_found":              "AI 介面未配置，請在系統設定中完成配置",
+		"error.ai_seo_connection_failed":         "AI 介面連接失敗，請檢查 API 地址和網路",
+		"error.ai_seo_api_error":                 "AI 介面返回錯誤，請檢查 Token 和模型配置",
+		"error.ai_seo_parse_failed":              "AI 返回內容解析失敗，請重試或調整提示詞",
+		"success.ai_seo_generated":               "AI SEO 內容生成成功",
 	},
 	LocaleEN: {
 		"error.jwt_secret_missing":                       "JWT secret is not configured",
@@ -995,6 +1005,11 @@ var messages = map[string]map[string]string{
 		"error.totp_cannot_reset_self":           "You cannot reset your own 2FA from this endpoint; use admin-tool CLI",
 		"error.invalid_upstream_status":          "Invalid upstream status parameter",
 		"error.invalid_product_status":           "Invalid product status parameter",
+		"error.ai_config_not_found":              "AI interface not configured, please complete the configuration in system settings",
+		"error.ai_seo_connection_failed":         "AI interface connection failed, please check the API URL and network",
+		"error.ai_seo_api_error":                 "AI interface returned an error, please check the token and model configuration",
+		"error.ai_seo_parse_failed":              "Failed to parse AI response, please retry or adjust the prompt",
+		"success.ai_seo_generated":               "AI SEO content generated successfully",
 	},
 }
 
