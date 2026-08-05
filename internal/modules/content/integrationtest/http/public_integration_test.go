@@ -196,6 +196,89 @@ func TestPublicContentHandlersReturnOnlyPublicData(t *testing.T) {
 	}
 }
 
+func TestPublicContentPostsListFilterByCategorySlug(t *testing.T) {
+	handler, posts, categories, _, _ := setupPublicContentHandlerTest(t)
+	router := publicContentTestRouter(handler)
+
+	published := true
+	tutorials, err := categories.Create(context.Background(), contentapp.CreatePostCategoryInput{
+		NameJSON: jsonmap.JSON{"zh-CN": "tutorials"},
+		Slug:     "tutorials",
+	})
+	if err != nil {
+		t.Fatalf("create tutorials category: %v", err)
+	}
+	news, err := categories.Create(context.Background(), contentapp.CreatePostCategoryInput{
+		NameJSON: jsonmap.JSON{"zh-CN": "news"},
+		Slug:     "news",
+	})
+	if err != nil {
+		t.Fatalf("create news category: %v", err)
+	}
+
+	for _, input := range []contentapp.CreatePostInput{
+		{Slug: "tutorial-alpha", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "alpha"}, IsPublished: &published, CategoryID: &tutorials.ID},
+		{Slug: "tutorial-beta", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "beta"}, IsPublished: &published, CategoryID: &tutorials.ID},
+		{Slug: "news-item", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "news"}, IsPublished: &published, CategoryID: &news.ID},
+	} {
+		if _, err := posts.Create(context.Background(), input); err != nil {
+			t.Fatalf("create post %q: %v", input.Slug, err)
+		}
+	}
+
+	recorder := requestPublicContent(t, router, "/api/v1/public/posts?category_slug=tutorials")
+	var listResponse struct {
+		StatusCode int `json:"status_code"`
+		Data       []struct {
+			Slug         string `json:"slug"`
+			CategorySlug string `json:"category_slug"`
+		} `json:"data"`
+		Pagination response.Pagination `json:"pagination"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &listResponse); err != nil {
+		t.Fatalf("decode category_slug list response: %v body=%s", err, recorder.Body.String())
+	}
+	if listResponse.StatusCode != response.CodeOK {
+		t.Fatalf("category_slug list status mismatch: %#v", listResponse)
+	}
+	if listResponse.Pagination.Total != 2 || len(listResponse.Data) != 2 {
+		t.Fatalf("category_slug list want 2 posts, total=%d data=%#v", listResponse.Pagination.Total, listResponse.Data)
+	}
+	for _, item := range listResponse.Data {
+		if item.CategorySlug != "tutorials" {
+			t.Fatalf("post %q must carry category_slug, got %q", item.Slug, item.CategorySlug)
+		}
+	}
+
+	emptyRecorder := requestPublicContent(t, router, "/api/v1/public/posts?category_slug=not-exists")
+	var emptyResponse struct {
+		StatusCode int                 `json:"status_code"`
+		Data       []interface{}       `json:"data"`
+		Pagination response.Pagination `json:"pagination"`
+	}
+	if err := json.Unmarshal(emptyRecorder.Body.Bytes(), &emptyResponse); err != nil {
+		t.Fatalf("decode unknown category_slug response: %v", err)
+	}
+	if emptyResponse.StatusCode != response.CodeOK || emptyResponse.Pagination.Total != 0 || len(emptyResponse.Data) != 0 {
+		t.Fatalf("unknown category_slug should return empty list, got %#v", emptyResponse)
+	}
+
+	detailRecorder := requestPublicContent(t, router, "/api/v1/public/posts/tutorial-alpha")
+	var detailResponse struct {
+		StatusCode int `json:"status_code"`
+		Data       struct {
+			Slug         string `json:"slug"`
+			CategorySlug string `json:"category_slug"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(detailRecorder.Body.Bytes(), &detailResponse); err != nil {
+		t.Fatalf("decode post detail response: %v", err)
+	}
+	if detailResponse.StatusCode != response.CodeOK || detailResponse.Data.Slug != "tutorial-alpha" || detailResponse.Data.CategorySlug != "tutorials" {
+		t.Fatalf("post detail must carry category_slug, got %#v", detailResponse.Data)
+	}
+}
+
 func TestPublicContentHandlersPreserveRepositoryErrorMapping(t *testing.T) {
 	handler, _, _, _, db := setupPublicContentHandlerTest(t)
 	router := publicContentTestRouter(handler)

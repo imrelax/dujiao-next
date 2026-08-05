@@ -12,6 +12,7 @@ import (
 
 	categorydomain "github.com/dujiao-next/internal/modules/catalog/category/domain"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
+	contentdomain "github.com/dujiao-next/internal/modules/content/domain"
 	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
 	paymentdomain "github.com/dujiao-next/internal/modules/payment/domain"
 	procurementdomain "github.com/dujiao-next/internal/modules/procurement/domain"
@@ -25,6 +26,7 @@ const (
 	manualStockRemainingMigrationSettingKey         = "migration/manual_stock_remaining_v1"
 	skuMigrationSettingKey                          = "migration/product_sku_v1"
 	categoryParentMigrationSettingKey               = "migration/category_parent_v1"
+	postCategorySlugMigrationSettingKey             = "migration/post_category_slug_v1"
 	paymentProviderBepusdtRenameMigrationSettingKey = "migration/payment_provider_bepusdt_rename_v1"
 	paymentChannelBepusdtConfigMigrationSettingKey  = "migration/payment_channel_bepusdt_config_v2"
 	orderItemOriginalPriceMigrationKey              = "migration/order_item_original_price_v1"
@@ -733,4 +735,49 @@ func ensureCategoryParentMigration() error {
 		},
 	}
 	return gormdb.DB.Save(&doneMarker).Error
+}
+
+// ensurePostCategorySlugMigration 为历史文章回填 category_slug，
+// 使存量数据同样携带与其分类一致的唯一标识，仅执行一次。
+func ensurePostCategorySlugMigration() error {
+	if gormdb.DB == nil {
+		return errors.New("database is not initialized")
+	}
+
+	var marker settingsstore.SettingRecord
+	if err := gormdb.DB.First(&marker, "key = ?", postCategorySlugMigrationSettingKey).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	} else if migrationDone(marker.ValueJSON) {
+		return nil
+	}
+
+	if !gormdb.DB.Migrator().HasColumn(&contentdomain.Post{}, "category_slug") {
+		return nil
+	}
+
+	return gormdb.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE posts
+			SET category_slug = (
+				SELECT pc.slug FROM post_categories pc
+				WHERE pc.id = posts.category_id AND pc.deleted_at IS NULL
+			)
+			WHERE deleted_at IS NULL
+			  AND category_id IS NOT NULL
+			  AND (category_slug IS NULL OR category_slug = '')
+		`).Error; err != nil {
+			return err
+		}
+
+		marker := settingsstore.SettingRecord{
+			Key: postCategorySlugMigrationSettingKey,
+			ValueJSON: jsonmap.JSON{
+				"done":        true,
+				"migrated_at": time.Now().UTC().Format(time.RFC3339),
+			},
+		}
+		return tx.Save(&marker).Error
+	})
 }

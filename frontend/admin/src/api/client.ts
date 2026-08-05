@@ -2,6 +2,7 @@ import i18n from '@/i18n'
 import type { ApiResponse } from './types'
 import { notifyError } from '@/utils/notify'
 import { adminUrl } from '@/utils/adminBase'
+import { checkCategoryParamCompliance } from '@/utils/categoryParamGuard'
 
 export type { ApiResponse }
 
@@ -102,6 +103,16 @@ async function request(method: string, path: string, bodyOrOptions?: any, option
 
   const url = buildUrl(baseURL, path, opts.params)
   const headers: Record<string, string> = { ...opts.headers }
+
+  // 分类参数合规校验：文章列表接口仅放行 category_slug，拦截 categoryid/category_id
+  const compliance = checkCategoryParamCompliance(path, opts.params)
+  if (!compliance.ok) {
+    const message = compliance.reason === 'category_id_blocked'
+      ? t('common.api.categoryIdBlocked')
+      : t('common.api.categorySlugRequired')
+    notifyError(message)
+    return Promise.reject(createNotifiedError(message))
+  }
 
   const locale = getLocale()
   if (locale) {

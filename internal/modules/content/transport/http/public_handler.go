@@ -48,10 +48,11 @@ func NewPublicHandler(posts PublicPostQueries, categories PublicPostCategoryQuer
 func (h *PublicHandler) GetPosts(c *gin.Context) {
 	page, pageSize := ginutil.ParsePagination(c)
 	posts, total, err := h.posts.ListPublic(c.Request.Context(), contentapp.PublicPostQuery{
-		Type:     c.Query("type"),
-		Search:   c.Query("search"),
-		Page:     page,
-		PageSize: pageSize,
+		Type:         c.Query("type"),
+		Search:       c.Query("search"),
+		CategorySlug: c.Query("category_slug"),
+		Page:         page,
+		PageSize:     pageSize,
 	})
 	if err != nil {
 		ginutil.RespondError(c, response.CodeInternal, "error.post_fetch_failed", err)

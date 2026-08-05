@@ -18,6 +18,7 @@ type PostResp struct {
 	Summary         jsonmap.JSON         `json:"summary"`
 	Content         jsonmap.JSON         `json:"content"`
 	Thumbnail       string               `json:"thumbnail,omitempty"`
+	CategorySlug    string               `json:"category_slug"`
 	PublishedAt     *time.Time           `json:"published_at"`
 	RelatedProducts []RelatedProductCard `json:"related_products,omitempty"`
 }
@@ -56,14 +57,15 @@ func NewRelatedProductCardList(products []contentcontract.RelatedProduct) []Rela
 // NewPostResp 从 Content 文章领域对象构造响应。
 func NewPostResp(p *contentdomain.Post) PostResp {
 	return PostResp{
-		ID:          p.ID,
-		Slug:        p.Slug,
-		Type:        p.Type,
-		Title:       p.TitleJSON,
-		Summary:     p.SummaryJSON,
-		Content:     p.ContentJSON,
-		Thumbnail:   p.Thumbnail,
-		PublishedAt: p.PublishedAt,
+		ID:           p.ID,
+		Slug:         p.Slug,
+		Type:         p.Type,
+		Title:        p.TitleJSON,
+		Summary:      p.SummaryJSON,
+		Content:      p.ContentJSON,
+		Thumbnail:    p.Thumbnail,
+		CategorySlug: p.CategorySlug,
+		PublishedAt:  p.PublishedAt,
 	}
 	// 排除：IsPublished(内部状态)、CreatedAt
 }

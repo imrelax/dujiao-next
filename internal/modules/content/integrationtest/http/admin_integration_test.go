@@ -182,6 +182,73 @@ func TestAdminContentHandlersSuccessContracts(t *testing.T) {
 	}
 }
 
+func TestAdminContentPostsListFilterByCategorySlug(t *testing.T) {
+	handler, _, _ := setupAdminContentHandlerTest(t)
+	router := adminContentTestRouter(handler)
+
+	categoryRecorder := requestAdminContent(t, router, http.MethodPost, "/api/v1/admin/post-categories", `{
+		"name":{"zh-CN":"Docs"},
+		"slug":"docs"
+	}`)
+	var categoryCreated struct {
+		StatusCode int `json:"status_code"`
+		Data       struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(categoryRecorder.Body.Bytes(), &categoryCreated); err != nil {
+		t.Fatalf("decode created category: %v", err)
+	}
+	if categoryCreated.StatusCode != response.CodeOK || categoryCreated.Data.ID == 0 {
+		t.Fatalf("create category failed: %#v", categoryCreated)
+	}
+
+	createPost := func(slug string, body string) {
+		t.Helper()
+		recorder := requestAdminContent(t, router, http.MethodPost, "/api/v1/admin/posts", body)
+		if got := decodeAdminContentResponse(t, recorder); got.StatusCode != response.CodeOK {
+			t.Fatalf("create post %s failed: %#v", slug, got)
+		}
+	}
+	createPost("categorized-post", fmt.Sprintf(`{"slug":"categorized-post","type":"blog","title":{"zh-CN":"categorized"},"is_published":true,"category_id":%d}`, categoryCreated.Data.ID))
+	createPost("plain-post", `{"slug":"plain-post","type":"blog","title":{"zh-CN":"plain"},"is_published":true}`)
+
+	listRecorder := requestAdminContent(t, router, http.MethodGet, "/api/v1/admin/posts?category_slug=docs", "")
+	var listResponse struct {
+		StatusCode int `json:"status_code"`
+		Data       []struct {
+			Slug         string `json:"slug"`
+			CategorySlug string `json:"category_slug"`
+		} `json:"data"`
+		Pagination response.Pagination `json:"pagination"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listResponse); err != nil {
+		t.Fatalf("decode admin category_slug list: %v body=%s", err, listRecorder.Body.String())
+	}
+	if listResponse.StatusCode != response.CodeOK {
+		t.Fatalf("admin category_slug list status mismatch: %#v", listResponse)
+	}
+	if listResponse.Pagination.Total != 1 || len(listResponse.Data) != 1 || listResponse.Data[0].Slug != "categorized-post" {
+		t.Fatalf("admin category_slug filter mismatch, total=%d data=%#v", listResponse.Pagination.Total, listResponse.Data)
+	}
+	if listResponse.Data[0].CategorySlug != "docs" {
+		t.Fatalf("admin post list must carry category_slug, got %q", listResponse.Data[0].CategorySlug)
+	}
+
+	emptyRecorder := requestAdminContent(t, router, http.MethodGet, "/api/v1/admin/posts?category_slug=not-exists", "")
+	var emptyResponse struct {
+		StatusCode int                 `json:"status_code"`
+		Data       []interface{}       `json:"data"`
+		Pagination response.Pagination `json:"pagination"`
+	}
+	if err := json.Unmarshal(emptyRecorder.Body.Bytes(), &emptyResponse); err != nil {
+		t.Fatalf("decode admin unknown category_slug response: %v", err)
+	}
+	if emptyResponse.StatusCode != response.CodeOK || emptyResponse.Pagination.Total != 0 || len(emptyResponse.Data) != 0 {
+		t.Fatalf("admin unknown category_slug should return empty list, got %#v", emptyResponse)
+	}
+}
+
 func TestAdminContentHandlersValidationAndDomainErrorContracts(t *testing.T) {
 	handler, posts, _ := setupAdminContentHandlerTest(t)
 	router := adminContentTestRouter(handler)

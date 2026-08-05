@@ -24,18 +24,20 @@ type CreatePostInput struct {
 
 // PublicPostQuery 描述公开文章列表查询。
 type PublicPostQuery struct {
-	Type     string
-	Search   string
-	Page     int
-	PageSize int
+	Type         string
+	Search       string
+	CategorySlug string
+	Page         int
+	PageSize     int
 }
 
 // AdminPostQuery 描述后台文章列表查询。
 type AdminPostQuery struct {
-	Type     string
-	Search   string
-	Page     int
-	PageSize int
+	Type         string
+	Search       string
+	CategorySlug string
+	Page         int
+	PageSize     int
 }
 
 // PostService 实现文章用例。
@@ -66,6 +68,7 @@ func (s *PostService) ListPublic(ctx context.Context, query PublicPostQuery) ([]
 		PageSize:      query.PageSize,
 		Type:          query.Type,
 		Search:        query.Search,
+		CategorySlug:  query.CategorySlug,
 		OnlyPublished: true,
 		Order:         contract.PostOrderPublishedDesc,
 	})
@@ -86,11 +89,12 @@ func (s *PostService) GetPublicBySlug(ctx context.Context, slug string) (*domain
 // ListAdmin 获取后台文章列表。
 func (s *PostService) ListAdmin(ctx context.Context, query AdminPostQuery) ([]domain.Post, int64, error) {
 	return s.posts.List(ctx, contract.PostQuery{
-		Page:     query.Page,
-		PageSize: query.PageSize,
-		Type:     query.Type,
-		Search:   query.Search,
-		Order:    contract.PostOrderCreatedDesc,
+		Page:         query.Page,
+		PageSize:     query.PageSize,
+		Type:         query.Type,
+		Search:       query.Search,
+		CategorySlug: query.CategorySlug,
+		Order:        contract.PostOrderCreatedDesc,
 	})
 }
 
@@ -101,6 +105,10 @@ func (s *PostService) Create(ctx context.Context, input CreatePostInput) (*domai
 	}
 	categoryID := normalizePostCategoryID(input.CategoryID)
 	if err := s.validateCategoryAssignment(ctx, input.Type, categoryID, nil); err != nil {
+		return nil, err
+	}
+	categorySlug, err := s.resolvePostCategorySlug(ctx, categoryID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -117,14 +125,15 @@ func (s *PostService) Create(ctx context.Context, input CreatePostInput) (*domai
 		isPublished = *input.IsPublished
 	}
 	post := domain.Post{
-		Slug:        input.Slug,
-		Type:        input.Type,
-		TitleJSON:   jsonmap.JSON(input.TitleJSON),
-		SummaryJSON: jsonmap.JSON(input.SummaryJSON),
-		ContentJSON: jsonmap.JSON(input.ContentJSON),
-		Thumbnail:   input.Thumbnail,
-		IsPublished: isPublished,
-		CategoryID:  categoryID,
+		Slug:         input.Slug,
+		Type:         input.Type,
+		TitleJSON:    jsonmap.JSON(input.TitleJSON),
+		SummaryJSON:  jsonmap.JSON(input.SummaryJSON),
+		ContentJSON:  jsonmap.JSON(input.ContentJSON),
+		Thumbnail:    input.Thumbnail,
+		IsPublished:  isPublished,
+		CategoryID:   categoryID,
+		CategorySlug: categorySlug,
 	}
 	if isPublished {
 		now := s.clock.Now()
@@ -162,6 +171,10 @@ func (s *PostService) Update(ctx context.Context, id string, input CreatePostInp
 	if err := s.validateCategoryAssignment(ctx, input.Type, categoryID, post.CategoryID); err != nil {
 		return nil, err
 	}
+	categorySlug, err := s.resolvePostCategorySlug(ctx, categoryID)
+	if err != nil {
+		return nil, err
+	}
 
 	count, err := s.posts.CountBySlug(ctx, input.Slug, &id)
 	if err != nil {
@@ -178,6 +191,7 @@ func (s *PostService) Update(ctx context.Context, id string, input CreatePostInp
 	post.ContentJSON = jsonmap.JSON(input.ContentJSON)
 	post.Thumbnail = input.Thumbnail
 	post.CategoryID = categoryID
+	post.CategorySlug = categorySlug
 	if input.IsPublished != nil {
 		wasPublished := post.IsPublished
 		post.IsPublished = *input.IsPublished
@@ -272,6 +286,25 @@ func normalizePostCategoryID(categoryID *uint) *uint {
 		return nil
 	}
 	return categoryID
+}
+
+// resolvePostCategorySlug 从分类ID解析唯一 slug，用于在文章写入时冗余存储分类标识。
+// 未绑定分类时返回空字符串，保证文章始终携带与其分类一致的 category_slug。
+func (s *PostService) resolvePostCategorySlug(ctx context.Context, categoryID *uint) (string, error) {
+	if categoryID == nil {
+		return "", nil
+	}
+	if s.categories == nil {
+		return "", nil
+	}
+	category, err := s.categories.GetByID(ctx, *categoryID)
+	if err != nil {
+		return "", err
+	}
+	if category == nil {
+		return "", nil
+	}
+	return category.Slug, nil
 }
 
 func sameOptionalUint(left, right *uint) bool {

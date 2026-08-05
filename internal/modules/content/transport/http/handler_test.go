@@ -25,7 +25,7 @@ func TestPublicHandlerPassesRequestContextToUseCase(t *testing.T) {
 
 	requestContext, cancel := context.WithCancel(context.WithValue(context.Background(), requestContextKey{}, "request-value"))
 	cancel()
-	request := httptest.NewRequest(http.MethodGet, "/posts?type=blog&page=2&page_size=5", nil).WithContext(requestContext)
+	request := httptest.NewRequest(http.MethodGet, "/posts?type=blog&category_slug=tutorials&page=2&page_size=5", nil).WithContext(requestContext)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
@@ -38,7 +38,7 @@ func TestPublicHandlerPassesRequestContextToUseCase(t *testing.T) {
 	if posts.receivedContext.Err() != context.Canceled {
 		t.Fatalf("context error = %v, want context.Canceled", posts.receivedContext.Err())
 	}
-	if posts.receivedQuery.Type != "blog" || posts.receivedQuery.Page != 2 || posts.receivedQuery.PageSize != 5 {
+	if posts.receivedQuery.Type != "blog" || posts.receivedQuery.CategorySlug != "tutorials" || posts.receivedQuery.Page != 2 || posts.receivedQuery.PageSize != 5 {
 		t.Fatalf("query mapping mismatch: %#v", posts.receivedQuery)
 	}
 }

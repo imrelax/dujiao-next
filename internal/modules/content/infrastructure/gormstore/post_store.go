@@ -54,6 +54,9 @@ func (s *PostStore) List(ctx context.Context, query contract.PostQuery) ([]domai
 		condition, argCount := buildLocalizedLikeCondition(db, []string{"slug"}, []string{"title_json"})
 		statement = statement.Where(condition, repeatLikeArgs(like, argCount)...)
 	}
+	if query.CategorySlug != "" {
+		statement = statement.Where("category_slug = ?", query.CategorySlug)
+	}
 
 	var total int64
 	if err := statement.Count(&total).Error; err != nil {

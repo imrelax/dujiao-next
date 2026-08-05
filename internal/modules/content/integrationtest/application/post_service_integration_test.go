@@ -221,6 +221,104 @@ func TestPostServiceListPublicFiltersDraftsAndOrdersByPublishedAt(t *testing.T) 
 	}
 }
 
+func TestPostServiceCreateAndUpdateFillCategorySlug(t *testing.T) {
+	svc, db := newPostServiceForTest(t)
+	announcements := createPostCategoryFixture(t, db, "announcements", nil)
+	tutorials := createPostCategoryFixture(t, db, "tutorials", nil)
+
+	created, err := svc.Create(context.Background(), contentapp.CreatePostInput{
+		Slug:       "categorized-post",
+		Type:       constants.PostTypeBlog,
+		TitleJSON:  map[string]interface{}{"zh-CN": "categorized-post"},
+		CategoryID: &announcements.ID,
+	})
+	if err != nil {
+		t.Fatalf("create categorized post: %v", err)
+	}
+	if created.CategorySlug != "announcements" {
+		t.Fatalf("create should fill category_slug, got %q", created.CategorySlug)
+	}
+
+	updated, err := svc.Update(context.Background(), fmt.Sprintf("%d", created.ID), contentapp.CreatePostInput{
+		Slug:       created.Slug,
+		Type:       constants.PostTypeBlog,
+		TitleJSON:  map[string]interface{}{"zh-CN": created.Slug},
+		CategoryID: &tutorials.ID,
+	})
+	if err != nil {
+		t.Fatalf("update category of post: %v", err)
+	}
+	if updated.CategorySlug != "tutorials" {
+		t.Fatalf("update should refresh category_slug, got %q", updated.CategorySlug)
+	}
+
+	withoutCategory, err := svc.Update(context.Background(), fmt.Sprintf("%d", created.ID), contentapp.CreatePostInput{
+		Slug:       created.Slug,
+		Type:       constants.PostTypeBlog,
+		TitleJSON:  map[string]interface{}{"zh-CN": created.Slug},
+		CategoryID: nil,
+	})
+	if err != nil {
+		t.Fatalf("clear category of post: %v", err)
+	}
+	if withoutCategory.CategorySlug != "" {
+		t.Fatalf("removing category should clear category_slug, got %q", withoutCategory.CategorySlug)
+	}
+}
+
+func TestPostServiceListFiltersByCategorySlug(t *testing.T) {
+	svc, db := newPostServiceForTest(t)
+	tutorials := createPostCategoryFixture(t, db, "tutorials", nil)
+	news := createPostCategoryFixture(t, db, "news", nil)
+
+	published := true
+	create := func(slug string, categoryID *uint) {
+		t.Helper()
+		if _, err := svc.Create(context.Background(), contentapp.CreatePostInput{
+			Slug:        slug,
+			Type:        constants.PostTypeBlog,
+			TitleJSON:   map[string]interface{}{"zh-CN": slug},
+			CategoryID:  categoryID,
+			IsPublished: &published,
+		}); err != nil {
+			t.Fatalf("create post %q: %v", slug, err)
+		}
+	}
+	create("tutorial-alpha", &tutorials.ID)
+	create("tutorial-beta", &tutorials.ID)
+	create("news-item", &news.ID)
+	create("no-category", nil)
+
+	publicPosts, publicTotal, err := svc.ListPublic(context.Background(), contentapp.PublicPostQuery{
+		CategorySlug: "tutorials",
+		Page:         1,
+		PageSize:     20,
+	})
+	if err != nil {
+		t.Fatalf("list public posts by category_slug: %v", err)
+	}
+	if publicTotal != 2 || len(publicPosts) != 2 {
+		t.Fatalf("public category_slug filter want 2 posts, total=%d posts=%#v", publicTotal, publicPosts)
+	}
+	for _, post := range publicPosts {
+		if post.CategorySlug != "tutorials" {
+			t.Fatalf("unexpected post %q with category_slug=%q", post.Slug, post.CategorySlug)
+		}
+	}
+
+	adminPosts, adminTotal, err := svc.ListAdmin(context.Background(), contentapp.AdminPostQuery{
+		CategorySlug: "news",
+		Page:         1,
+		PageSize:     20,
+	})
+	if err != nil {
+		t.Fatalf("list admin posts by category_slug: %v", err)
+	}
+	if adminTotal != 1 || len(adminPosts) != 1 || adminPosts[0].Slug != "news-item" {
+		t.Fatalf("admin category_slug filter mismatch, total=%d posts=%#v", adminTotal, adminPosts)
+	}
+}
+
 func TestPostServiceGetPublicBySlugHidesDraftsAndMissingPosts(t *testing.T) {
 	svc, db := newPostServiceForTest(t)
 	_ = createPostFixture(t, db, "draft-post", constants.PostTypeBlog, nil)

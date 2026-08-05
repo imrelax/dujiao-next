@@ -66,10 +66,11 @@ func NewAdminHandler(posts AdminPostUseCases, categories AdminPostCategoryUseCas
 func (h *AdminHandler) GetAdminPosts(c *gin.Context) {
 	page, pageSize := ginutil.ParsePagination(c)
 	posts, total, err := h.posts.ListAdmin(c.Request.Context(), contentapp.AdminPostQuery{
-		Type:     c.Query("type"),
-		Search:   c.Query("search"),
-		Page:     page,
-		PageSize: pageSize,
+		Type:         c.Query("type"),
+		Search:       c.Query("search"),
+		CategorySlug: c.Query("category_slug"),
+		Page:         page,
+		PageSize:     pageSize,
 	})
 	if err != nil {
 		ginutil.RespondError(c, response.CodeInternal, "error.post_fetch_failed", err)

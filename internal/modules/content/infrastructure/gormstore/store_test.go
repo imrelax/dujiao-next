@@ -143,6 +143,67 @@ func TestPostStoreQueriesAndOrderedRelations(t *testing.T) {
 	}
 }
 
+func TestPostStoreListFiltersByCategorySlug(t *testing.T) {
+	db := setupContentStoreTest(t)
+	store := NewPostStore(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	tutorials := uint(1)
+	news := uint(2)
+	posts := []contentdomain.Post{
+		{Slug: "tutorial-one", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "教程一"}, IsPublished: true, PublishedAt: &now, CategoryID: &tutorials, CategorySlug: "tutorials"},
+		{Slug: "tutorial-two", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "教程二"}, IsPublished: true, PublishedAt: &now, CategoryID: &tutorials, CategorySlug: "tutorials"},
+		{Slug: "news-one", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "资讯一"}, IsPublished: true, PublishedAt: &now, CategoryID: &news, CategorySlug: "news"},
+		{Slug: "uncategorized", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "未分类"}, IsPublished: true, PublishedAt: &now},
+	}
+	for index := range posts {
+		if err := store.Create(ctx, &posts[index]); err != nil {
+			t.Fatalf("create post %q: %v", posts[index].Slug, err)
+		}
+	}
+
+	listed, total, err := store.List(ctx, contentcontract.PostQuery{
+		Page:          1,
+		PageSize:      20,
+		CategorySlug:  "tutorials",
+		OnlyPublished: true,
+		Order:         contentcontract.PostOrderPublishedDesc,
+	})
+	if err != nil {
+		t.Fatalf("list posts by category_slug: %v", err)
+	}
+	if total != 2 || len(listed) != 2 {
+		t.Fatalf("category_slug filter want 2 posts, total=%d listed=%d", total, len(listed))
+	}
+	for _, post := range listed {
+		if post.CategorySlug != "tutorials" {
+			t.Fatalf("unexpected post %q with category_slug=%q", post.Slug, post.CategorySlug)
+		}
+	}
+
+	none, noneTotal, err := store.List(ctx, contentcontract.PostQuery{
+		Page:          1,
+		PageSize:      20,
+		CategorySlug:  "not-exists",
+		OnlyPublished: true,
+	})
+	if err != nil {
+		t.Fatalf("list posts by unknown category_slug: %v", err)
+	}
+	if noneTotal != 0 || len(none) != 0 {
+		t.Fatalf("unknown category_slug should return empty, total=%d listed=%d", noneTotal, len(none))
+	}
+
+	all, allTotal, err := store.List(ctx, contentcontract.PostQuery{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("list all posts: %v", err)
+	}
+	if allTotal != 4 || len(all) != 4 {
+		t.Fatalf("empty category_slug must not filter, total=%d listed=%d", allTotal, len(all))
+	}
+}
+
 func TestPostCategoryStoreTreeFiltersAndUsageCounts(t *testing.T) {
 	db := setupContentStoreTest(t)
 	store := NewPostCategoryStore(db)

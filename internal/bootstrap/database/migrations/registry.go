@@ -128,6 +128,9 @@ func AutoMigrate() error {
 	if err := ensureOrderItemOriginalPriceMigration(); err != nil {
 		return err
 	}
+	if err := ensurePostCategorySlugMigration(); err != nil {
+		return err
+	}
 	if err := ensureCartForeignKeyConstraints(); err != nil {
 		return err
 	}
