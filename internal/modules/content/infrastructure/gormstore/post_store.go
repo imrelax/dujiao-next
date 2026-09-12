@@ -49,6 +49,15 @@ func (s *PostStore) List(ctx context.Context, query contract.PostQuery) ([]domai
 	if query.Type != "" {
 		statement = statement.Where("type = ?", query.Type)
 	}
+	if len(query.CategoryIDs) > 0 {
+		statement = statement.Where("posts.category_id IN ?", query.CategoryIDs)
+	} else if query.CategoryID != "" {
+		statement = statement.Where("posts.category_id = ?", query.CategoryID)
+	}
+	// 三态发布状态筛选：OnlyPublished 已强制 is_published = true，此时不再叠加
+	if query.IsPublished != nil && !query.OnlyPublished {
+		statement = statement.Where("posts.is_published = ?", *query.IsPublished)
+	}
 	if search := strings.TrimSpace(query.Search); search != "" {
 		like := "%" + search + "%"
 		condition, argCount := buildLocalizedLikeCondition(db, []string{"slug"}, []string{"title_json"})

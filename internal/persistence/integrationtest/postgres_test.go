@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,16 +54,22 @@ func setupPostgresIntegrationDB(t *testing.T) *gorm.DB {
 		&paymentdomain.Payment{},
 		&orderdomain.Order{},
 		&contentdomain.PostProduct{},
+		&productdomain.ProductSKU{},
 		&productdomain.Product{},
 		&categorydomain.Category{},
 		&contentdomain.Banner{},
 		&contentdomain.Post{},
+		&contentdomain.PostCategory{},
 	}
 	_ = db.Migrator().DropTable(cleanupModels...)
 
+	// product_skus：商品搜索条件里含有对 product_skus 的 EXISTS 子查询，缺表会让既有用例报错；
+	// post_categories：文章分类筛选用例的依赖表。两者都必须随夹具一同迁移。
 	if err := db.AutoMigrate(
 		&categorydomain.Category{},
 		&productdomain.Product{},
+		&productdomain.ProductSKU{},
+		&contentdomain.PostCategory{},
 		&contentdomain.Post{},
 		&contentdomain.PostProduct{},
 		&contentdomain.Banner{},
@@ -393,5 +400,68 @@ func TestPostgresDashboardQueries(t *testing.T) {
 	}
 	if strings.TrimSpace(paymentTrends[0].Day) == "" {
 		t.Fatalf("payment trend day should not be empty")
+	}
+}
+
+// 文章列表的分类筛选在 PostgreSQL 上需与 SQLite 语义一致：
+// CategoryIDs 走 IN、CategoryID 走等值，并与发布态按 AND 组合。
+func TestPostgresPostListFiltersByCategory(t *testing.T) {
+	db := setupPostgresIntegrationDB(t)
+	ctx := context.Background()
+	publishedAt := time.Now().UTC()
+
+	categoryStore := contentgormstore.NewPostCategoryStore(db)
+	root := &contentdomain.PostCategory{Slug: "pg-post-category-root", NameJSON: jsonmap.JSON{"zh-CN": "PG 文章分类"}, IsActive: true}
+	if err := categoryStore.Create(ctx, root); err != nil {
+		t.Fatalf("create postgres post category failed: %v", err)
+	}
+	rootID := root.ID
+	child := &contentdomain.PostCategory{Slug: "pg-post-category-child", NameJSON: jsonmap.JSON{"zh-CN": "PG 文章子分类"}, ParentID: &rootID, IsActive: true}
+	if err := categoryStore.Create(ctx, child); err != nil {
+		t.Fatalf("create postgres post child category failed: %v", err)
+	}
+	childID := child.ID
+
+	posts := []contentdomain.Post{
+		{Slug: "pg-post-root", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "PG 根分类文章"}, CategoryID: &rootID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "pg-post-child", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "PG 子分类文章"}, CategoryID: &childID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "pg-post-none", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "PG 未分类文章"}, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "pg-post-draft", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "PG 子分类草稿"}, CategoryID: &childID, IsPublished: false},
+	}
+	for index := range posts {
+		if err := db.Create(&posts[index]).Error; err != nil {
+			t.Fatalf("create postgres post %q failed: %v", posts[index].Slug, err)
+		}
+	}
+
+	store := contentgormstore.NewPostStore(db)
+	listSlugs := func(query contentcontract.PostQuery) map[string]bool {
+		t.Helper()
+		query.Page = 1
+		query.PageSize = 50
+		rows, _, err := store.List(ctx, query)
+		if err != nil {
+			t.Fatalf("postgres post list failed: %v", err)
+		}
+		got := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	got := listSlugs(contentcontract.PostQuery{CategoryID: strconv.FormatUint(uint64(childID), 10)})
+	if !got["pg-post-child"] || !got["pg-post-draft"] || len(got) != 2 {
+		t.Fatalf("postgres CategoryID equality mismatch: %+v", got)
+	}
+
+	got = listSlugs(contentcontract.PostQuery{CategoryIDs: []uint{rootID, childID}, OnlyPublished: true})
+	if !got["pg-post-root"] || !got["pg-post-child"] || got["pg-post-draft"] || got["pg-post-none"] || len(got) != 2 {
+		t.Fatalf("postgres CategoryIDs IN + OnlyPublished mismatch: %+v", got)
+	}
+
+	got = listSlugs(contentcontract.PostQuery{})
+	if len(got) != 4 {
+		t.Fatalf("postgres without category filter should return all posts: %+v", got)
 	}
 }

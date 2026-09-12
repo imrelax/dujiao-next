@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"strconv"
+	"strings"
 
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/modules/content/contract"
@@ -24,18 +26,21 @@ type CreatePostInput struct {
 
 // PublicPostQuery 描述公开文章列表查询。
 type PublicPostQuery struct {
-	Type     string
-	Search   string
-	Page     int
-	PageSize int
+	Type       string
+	Search     string
+	CategoryID string
+	Page       int
+	PageSize   int
 }
 
 // AdminPostQuery 描述后台文章列表查询。
 type AdminPostQuery struct {
-	Type     string
-	Search   string
-	Page     int
-	PageSize int
+	Type        string
+	Search      string
+	CategoryID  string
+	IsPublished *bool
+	Page        int
+	PageSize    int
 }
 
 // PostService 实现文章用例。
@@ -61,11 +66,17 @@ func NewPostService(posts contract.PostStore, relations contract.PostProductRela
 
 // ListPublic 获取公开文章列表。
 func (s *PostService) ListPublic(ctx context.Context, query PublicPostQuery) ([]domain.Post, int64, error) {
+	categoryIDs, err := s.expandPublicPostCategoryIDs(ctx, query.CategoryID)
+	if err != nil {
+		return nil, 0, err
+	}
 	return s.posts.List(ctx, contract.PostQuery{
 		Page:          query.Page,
 		PageSize:      query.PageSize,
 		Type:          query.Type,
 		Search:        query.Search,
+		CategoryID:    strings.TrimSpace(query.CategoryID),
+		CategoryIDs:   categoryIDs,
 		OnlyPublished: true,
 		Order:         contract.PostOrderPublishedDesc,
 	})
@@ -86,12 +97,61 @@ func (s *PostService) GetPublicBySlug(ctx context.Context, slug string) (*domain
 // ListAdmin 获取后台文章列表。
 func (s *PostService) ListAdmin(ctx context.Context, query AdminPostQuery) ([]domain.Post, int64, error) {
 	return s.posts.List(ctx, contract.PostQuery{
-		Page:     query.Page,
-		PageSize: query.PageSize,
-		Type:     query.Type,
-		Search:   query.Search,
-		Order:    contract.PostOrderCreatedDesc,
+		Page:        query.Page,
+		PageSize:    query.PageSize,
+		Type:        query.Type,
+		Search:      query.Search,
+		CategoryID:  strings.TrimSpace(query.CategoryID),
+		IsPublished: query.IsPublished,
+		Order:       contract.PostOrderCreatedDesc,
 	})
+}
+
+// expandPublicPostCategoryIDs 展开公开文章列表的分类筛选条件，返回应命中的分类 ID。
+//
+// 语义与商品分类的 expandPublicCategoryIDs 保持一致：未传分类返回 nil（不筛选）；
+// 一级分类展开为「自身 + 启用中的子分类」；二级分类只返回自身；
+// 分类不存在时按原 ID 查询，分类已停用时返回空集。
+func (s *PostService) expandPublicPostCategoryIDs(ctx context.Context, categoryID string) ([]uint, error) {
+	normalizedCategoryID := strings.TrimSpace(categoryID)
+	if normalizedCategoryID == "" {
+		return nil, nil
+	}
+
+	parsedCategoryID, err := strconv.ParseUint(normalizedCategoryID, 10, 64)
+	if err != nil || parsedCategoryID == 0 {
+		return nil, nil
+	}
+	if s.categories == nil {
+		return []uint{uint(parsedCategoryID)}, nil
+	}
+
+	category, err := s.categories.GetByID(ctx, uint(parsedCategoryID))
+	if err != nil {
+		return nil, err
+	}
+	if category == nil {
+		return []uint{uint(parsedCategoryID)}, nil
+	}
+	if !category.IsActive {
+		return []uint{}, nil
+	}
+	if category.ParentID != nil && *category.ParentID > 0 {
+		return []uint{category.ID}, nil
+	}
+
+	categories, err := s.categories.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	categoryIDs := []uint{category.ID}
+	for _, item := range categories {
+		if item.ParentID != nil && *item.ParentID == category.ID {
+			categoryIDs = append(categoryIDs, item.ID)
+		}
+	}
+	return categoryIDs, nil
 }
 
 // Create 创建文章。

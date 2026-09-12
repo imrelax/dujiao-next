@@ -44,11 +44,17 @@ const loading = ref(false)
 const showModal = ref(false)
 const isEditing = ref(false)
 const currentTab = ref(route.params.type === 'notice' ? 'notice' : 'blog')
+const categoryFilter = ref('all')
+const statusFilter = ref('all')
 const currentLang = ref('zh-CN')
 const submitting = ref(false)
 
 watch(currentTab, (tab) => {
   pagination.page = 1
+  // 公告没有分类语义，切到公告时清掉分类筛选，避免残留条件影响列表
+  if (tab === 'notice') {
+    categoryFilter.value = 'all'
+  }
   fetchPosts()
   if (route.params.type !== tab) {
     router.replace(`/posts/${tab}`)
@@ -163,6 +169,8 @@ const fetchPosts = async () => {
       page: pagination.page,
       page_size: pagination.page_size,
       type: currentTab.value,
+      category_id: categoryFilter.value === 'all' ? undefined : categoryFilter.value,
+      is_published: statusQueryValue(),
     })
     posts.value = res.data.data || []
     if (res.data.pagination) {
@@ -229,6 +237,18 @@ const getCategoryName = (categoryId?: number | null) => {
 const getCategoryPath = (categoryId: number) => {
   const cat = categories.value.find(c => c.id === categoryId)
   return cat ? getLocalizedText(cat.name) : ''
+}
+
+// 文章发布状态三态：'all' 不下发参数，'published' → is_published=1，'draft' → is_published=0
+const statusQueryValue = () => {
+  if (statusFilter.value === 'published') return '1'
+  if (statusFilter.value === 'draft') return '0'
+  return undefined
+}
+
+const handleFilterChange = () => {
+  pagination.page = 1
+  fetchPosts()
 }
 
 const changePage = (page: number) => {
@@ -381,6 +401,43 @@ watch(
         <TabsTrigger value="notice">{{ t('admin.posts.tabs.notice') }}</TabsTrigger>
       </TabsList>
     </Tabs>
+
+    <div class="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <!-- 公告没有分类维度，分类筛选仅在博客文章下提供 -->
+        <div v-if="currentTab === 'blog'" class="w-full md:w-56">
+          <Select v-model="categoryFilter" @update:modelValue="handleFilterChange">
+            <SelectTrigger class="h-9 w-full">
+              <SelectValue :placeholder="t('admin.posts.filters.categoryPlaceholder')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{{ t('admin.posts.filters.categoryAll') }}</SelectItem>
+              <SelectItem
+                v-for="cat in categories"
+                :key="cat.id"
+                :value="String(cat.id)"
+                :disabled="!cat.selectable"
+                :class="cat.depth > 0 ? 'pl-5' : ''"
+              >
+                {{ getCategoryPath(cat.id) || getLocalizedText(cat.name) }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="w-full md:w-48">
+          <Select v-model="statusFilter" @update:modelValue="handleFilterChange">
+            <SelectTrigger class="h-9 w-full">
+              <SelectValue :placeholder="t('admin.posts.filters.statusPlaceholder')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{{ t('admin.posts.filters.statusAll') }}</SelectItem>
+              <SelectItem value="published">{{ t('admin.posts.filters.statusPublished') }}</SelectItem>
+              <SelectItem value="draft">{{ t('admin.posts.filters.statusDraft') }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
 
     <div class="rounded-xl border border-border bg-card overflow-x-auto">
       <Table class="min-w-[980px]">

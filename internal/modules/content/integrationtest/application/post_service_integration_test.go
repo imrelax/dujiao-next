@@ -447,3 +447,58 @@ func TestPostServiceListPostsForProductFiltersTypeAndPublication(t *testing.T) {
 		t.Fatalf("expected first related published blog, got %#v", limited)
 	}
 }
+
+// 公开文章列表的 category_id 展开语义：一级分类含「自身 + 启用中的子分类」，
+// 二级分类只返回自身，未传分类不筛选——与商品分类 expandPublicCategoryIDs 保持一致。
+func TestPostServiceListPublicExpandsRootCategoryForFilter(t *testing.T) {
+	svc, db := newPostServiceForTest(t)
+	ctx := context.Background()
+	publishedAt := time.Now().UTC()
+
+	root := createPostCategoryFixture(t, db, "expand-root", nil)
+	child := createPostCategoryFixture(t, db, "expand-child", &root.ID)
+	disabledChild := createPostCategoryFixture(t, db, "expand-disabled-child", &root.ID)
+	if err := db.Model(&contentdomain.PostCategory{}).Where("id = ?", disabledChild.ID).Update("is_active", false).Error; err != nil {
+		t.Fatalf("disable child category failed: %v", err)
+	}
+
+	fixtures := []contentdomain.Post{
+		{Slug: "expand-post-root", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "root"}, CategoryID: &root.ID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "expand-post-child", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "child"}, CategoryID: &child.ID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "expand-post-disabled", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "disabled"}, CategoryID: &disabledChild.ID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "expand-post-none", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "none"}, IsPublished: true, PublishedAt: &publishedAt},
+	}
+	for i := range fixtures {
+		if err := db.Create(&fixtures[i]).Error; err != nil {
+			t.Fatalf("create post fixture %q failed: %v", fixtures[i].Slug, err)
+		}
+	}
+
+	slugs := func(categoryID string) map[string]bool {
+		t.Helper()
+		rows, _, err := svc.ListPublic(ctx, contentapp.PublicPostQuery{CategoryID: categoryID, Page: 1, PageSize: 20})
+		if err != nil {
+			t.Fatalf("list public posts by category %q failed: %v", categoryID, err)
+		}
+		got := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	got := slugs(fmt.Sprintf("%d", root.ID))
+	if !got["expand-post-root"] || !got["expand-post-child"] || got["expand-post-disabled"] || got["expand-post-none"] || len(got) != 2 {
+		t.Fatalf("root category should expand to active children only, got %+v", got)
+	}
+
+	got = slugs(fmt.Sprintf("%d", child.ID))
+	if !got["expand-post-child"] || len(got) != 1 {
+		t.Fatalf("child category should match itself only, got %+v", got)
+	}
+
+	got = slugs("")
+	if len(got) != 4 {
+		t.Fatalf("empty category should not filter, got %+v", got)
+	}
+}

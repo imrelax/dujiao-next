@@ -320,3 +320,160 @@ func TestLocalizedSearchDialectExpressions(t *testing.T) {
 		t.Fatalf("sqlite localized search expression mismatch args=%d sql=%s", sqliteArgs, sqliteCondition)
 	}
 }
+
+// 文章列表按分类筛选：CategoryIDs 走 IN、CategoryID 走等值，
+// 并与类型、搜索、发布态按 AND 组合；未分类文章不落入任何分类筛选。
+func TestPostStoreListFiltersByCategory(t *testing.T) {
+	db := setupContentStoreTest(t)
+	store := NewPostStore(db)
+	ctx := context.Background()
+
+	root := contentdomain.PostCategory{Slug: "guides", NameJSON: jsonmap.JSON{"zh-CN": "指南"}, IsActive: true}
+	if err := db.Create(&root).Error; err != nil {
+		t.Fatalf("create root category: %v", err)
+	}
+	rootID := root.ID
+	child := contentdomain.PostCategory{Slug: "deploy", NameJSON: jsonmap.JSON{"zh-CN": "部署"}, ParentID: &rootID, IsActive: true}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatalf("create child category: %v", err)
+	}
+	childID := child.ID
+
+	posts := []contentdomain.Post{
+		{Slug: "cat-root", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "根分类文章"}, CategoryID: &rootID, IsPublished: true},
+		{Slug: "cat-child", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "子分类文章"}, CategoryID: &childID, IsPublished: true},
+		{Slug: "cat-none", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "未分类文章"}, IsPublished: true},
+		{Slug: "cat-draft", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "子分类草稿"}, CategoryID: &childID, IsPublished: false},
+	}
+	for index := range posts {
+		if err := store.Create(ctx, &posts[index]); err != nil {
+			t.Fatalf("create post %q: %v", posts[index].Slug, err)
+		}
+	}
+
+	slugs := func(query contentcontract.PostQuery) map[string]bool {
+		t.Helper()
+		query.Page = 1
+		query.PageSize = 20
+		rows, _, err := store.List(ctx, query)
+		if err != nil {
+			t.Fatalf("list posts: %v", err)
+		}
+		got := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	got := slugs(contentcontract.PostQuery{CategoryID: fmt.Sprintf("%d", childID)})
+	if !got["cat-child"] || !got["cat-draft"] || len(got) != 2 {
+		t.Fatalf("CategoryID equality mismatch: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{CategoryIDs: []uint{rootID, childID}})
+	if !got["cat-root"] || !got["cat-child"] || !got["cat-draft"] || len(got) != 3 {
+		t.Fatalf("CategoryIDs IN mismatch: %+v", got)
+	}
+
+	if got["cat-none"] {
+		t.Fatalf("uncategorized post must not match a category filter: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{CategoryIDs: []uint{childID}, OnlyPublished: true})
+	if !got["cat-child"] || got["cat-draft"] || len(got) != 1 {
+		t.Fatalf("category + OnlyPublished mismatch: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{CategoryIDs: []uint{childID}, Search: "子分类文章", OnlyPublished: true})
+	if !got["cat-child"] || len(got) != 1 {
+		t.Fatalf("category + search match mismatch: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{CategoryIDs: []uint{childID}, Search: "绝不匹配的关键词"})
+	if len(got) != 0 {
+		t.Fatalf("category + non-matching search should be empty: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{CategoryIDs: []uint{childID}, Type: constants.PostTypeNotice})
+	if len(got) != 0 {
+		t.Fatalf("category + notice type should be empty: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{})
+	if !got["cat-none"] || len(got) != 4 {
+		t.Fatalf("without category filter all posts should be returned: %+v", got)
+	}
+}
+
+// 文章发布状态筛选是三态的：nil 不限、true 仅已发布、false 仅草稿；
+// 与分类、类型按 AND 组合，且 OnlyPublished 优先不被反向覆盖。
+func TestPostStoreListFiltersByPublishedState(t *testing.T) {
+	db := setupContentStoreTest(t)
+	store := NewPostStore(db)
+	ctx := context.Background()
+
+	category := contentdomain.PostCategory{Slug: "published-state-cat", NameJSON: jsonmap.JSON{"zh-CN": "状态分类"}, IsActive: true}
+	if err := db.Create(&category).Error; err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	categoryID := category.ID
+
+	posts := []contentdomain.Post{
+		{Slug: "state-published", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "已发布文章"}, CategoryID: &categoryID, IsPublished: true},
+		{Slug: "state-draft", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "草稿文章"}, CategoryID: &categoryID, IsPublished: false},
+		{Slug: "state-notice-draft", Type: constants.PostTypeNotice, TitleJSON: jsonmap.JSON{"zh-CN": "草稿公告"}, IsPublished: false},
+	}
+	for index := range posts {
+		if err := store.Create(ctx, &posts[index]); err != nil {
+			t.Fatalf("create post %q: %v", posts[index].Slug, err)
+		}
+	}
+
+	slugs := func(query contentcontract.PostQuery) map[string]bool {
+		t.Helper()
+		query.Page = 1
+		query.PageSize = 20
+		rows, _, err := store.List(ctx, query)
+		if err != nil {
+			t.Fatalf("list posts: %v", err)
+		}
+		got := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	published := true
+	got := slugs(contentcontract.PostQuery{IsPublished: &published})
+	if !got["state-published"] || got["state-draft"] || got["state-notice-draft"] || len(got) != 1 {
+		t.Fatalf("IsPublished=true should return only published rows: %+v", got)
+	}
+
+	draft := false
+	got = slugs(contentcontract.PostQuery{IsPublished: &draft})
+	if !got["state-draft"] || !got["state-notice-draft"] || got["state-published"] || len(got) != 2 {
+		t.Fatalf("IsPublished=false should return only drafts: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{})
+	if len(got) != 3 {
+		t.Fatalf("IsPublished=nil should return all rows: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{IsPublished: &draft, CategoryID: fmt.Sprintf("%d", categoryID)})
+	if !got["state-draft"] || got["state-notice-draft"] || len(got) != 1 {
+		t.Fatalf("IsPublished=false + category mismatch: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{IsPublished: &draft, Type: constants.PostTypeNotice})
+	if !got["state-notice-draft"] || len(got) != 1 {
+		t.Fatalf("IsPublished=false + notice type mismatch: %+v", got)
+	}
+
+	got = slugs(contentcontract.PostQuery{OnlyPublished: true, IsPublished: &draft})
+	if !got["state-published"] || len(got) != 1 {
+		t.Fatalf("OnlyPublished should win over IsPublished: %+v", got)
+	}
+}

@@ -2436,6 +2436,14 @@ const messages = {
           action: '操作',
         },
         empty: '暂无文章',
+        filters: {
+          categoryPlaceholder: '文章分类',
+          categoryAll: '全部分类',
+          statusPlaceholder: '文章状态',
+          statusAll: '全部状态',
+          statusPublished: '已发布',
+          statusDraft: '草稿',
+        },
         status: {
           published: '已发布',
           draft: '草稿',
@@ -6879,6 +6887,14 @@ const messages = {
           action: '操作',
         },
         empty: '暫無文章',
+        filters: {
+          categoryPlaceholder: '文章分類',
+          categoryAll: '全部分類',
+          statusPlaceholder: '文章狀態',
+          statusAll: '全部狀態',
+          statusPublished: '已發布',
+          statusDraft: '草稿',
+        },
         status: {
           published: '已發布',
           draft: '草稿',
@@ -11322,6 +11338,14 @@ const messages = {
           action: 'Action',
         },
         empty: 'No posts',
+        filters: {
+          categoryPlaceholder: 'Post category',
+          categoryAll: 'All categories',
+          statusPlaceholder: 'Post status',
+          statusAll: 'All statuses',
+          statusPublished: 'Published',
+          statusDraft: 'Draft',
+        },
         status: {
           published: 'Published',
           draft: 'Draft',

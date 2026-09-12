@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -228,5 +229,74 @@ func TestPublicContentHandlersPreserveRepositoryErrorMapping(t *testing.T) {
 	}
 	if categories.StatusCode != response.CodeInternal {
 		t.Fatalf("category repository error should be observable as internal error, got %#v", categories)
+	}
+}
+
+// 公开文章列表的 category_id 查询参数：一级分类含启用中的子分类、
+// 二级分类仅自身，并与 search 按 AND 组合。
+func TestPublicContentPostsListFilterByCategoryID(t *testing.T) {
+	handler, _, _, _, db := setupPublicContentHandlerTest(t)
+	router := publicContentTestRouter(handler)
+	publishedAt := time.Now().UTC()
+
+	root := contentdomain.PostCategory{Slug: "public-filter-root", NameJSON: jsonmap.JSON{"zh-CN": "公开筛选根"}, IsActive: true}
+	if err := db.Create(&root).Error; err != nil {
+		t.Fatalf("create root category failed: %v", err)
+	}
+	rootID := root.ID
+	child := contentdomain.PostCategory{Slug: "public-filter-child", NameJSON: jsonmap.JSON{"zh-CN": "公开筛选子"}, ParentID: &rootID, IsActive: true}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatalf("create child category failed: %v", err)
+	}
+	childID := child.ID
+
+	fixtures := []contentdomain.Post{
+		{Slug: "public-filter-post-root", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "公开根分类"}, CategoryID: &rootID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "public-filter-post-child", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "公开子分类"}, CategoryID: &childID, IsPublished: true, PublishedAt: &publishedAt},
+		{Slug: "public-filter-post-none", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "公开未分类"}, IsPublished: true, PublishedAt: &publishedAt},
+	}
+	for i := range fixtures {
+		if err := db.Create(&fixtures[i]).Error; err != nil {
+			t.Fatalf("create post fixture %q failed: %v", fixtures[i].Slug, err)
+		}
+	}
+
+	slugs := func(path string) map[string]bool {
+		t.Helper()
+		recorder := requestPublicContent(t, router, path)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("request %s want 200 got %d body=%s", path, recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			Data []contentdomain.Post `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode %s failed: %v body=%s", path, err, recorder.Body.String())
+		}
+		got := make(map[string]bool, len(payload.Data))
+		for _, row := range payload.Data {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	got := slugs(fmt.Sprintf("/api/v1/public/posts?category_id=%d", rootID))
+	if !got["public-filter-post-root"] || !got["public-filter-post-child"] || got["public-filter-post-none"] || len(got) != 2 {
+		t.Fatalf("public root category filter mismatch: %+v", got)
+	}
+
+	got = slugs(fmt.Sprintf("/api/v1/public/posts?category_id=%d", childID))
+	if !got["public-filter-post-child"] || len(got) != 1 {
+		t.Fatalf("public child category filter mismatch: %+v", got)
+	}
+
+	got = slugs(fmt.Sprintf("/api/v1/public/posts?category_id=%d&search=%s", rootID, url.QueryEscape("公开子分类")))
+	if !got["public-filter-post-child"] || len(got) != 1 {
+		t.Fatalf("public category + search mismatch: %+v", got)
+	}
+
+	got = slugs("/api/v1/public/posts")
+	if len(got) != 3 {
+		t.Fatalf("public without category filter should return all published posts: %+v", got)
 	}
 }

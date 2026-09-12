@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 
 	contentapp "github.com/dujiao-next/internal/modules/content/application"
 	contentcontract "github.com/dujiao-next/internal/modules/content/contract"
@@ -65,17 +66,48 @@ func NewAdminHandler(posts AdminPostUseCases, categories AdminPostCategoryUseCas
 // GetAdminPosts 获取后台文章列表。
 func (h *AdminHandler) GetAdminPosts(c *gin.Context) {
 	page, pageSize := ginutil.ParsePagination(c)
+	// 三态发布状态筛选：?is_published=1 仅已发布，?is_published=0 仅草稿，缺省/all 不限。
+	// 与 type / search / category_id 之间是 AND 关系，可任意组合。
+	isPublished, err := parseTriStateBoolQuery(c.Query("is_published"))
+	if err != nil {
+		ginutil.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+		return
+	}
 	posts, total, err := h.posts.ListAdmin(c.Request.Context(), contentapp.AdminPostQuery{
-		Type:     c.Query("type"),
-		Search:   c.Query("search"),
-		Page:     page,
-		PageSize: pageSize,
+		Type:        c.Query("type"),
+		Search:      c.Query("search"),
+		CategoryID:  c.Query("category_id"),
+		IsPublished: isPublished,
+		Page:        page,
+		PageSize:    pageSize,
 	})
 	if err != nil {
 		ginutil.RespondError(c, response.CodeInternal, "error.post_fetch_failed", err)
 		return
 	}
 	response.SuccessWithPage(c, posts, response.BuildPagination(page, pageSize, total))
+}
+
+// parseTriStateBoolQuery 把三态布尔查询参数解析为 *bool：""/"all" 返回 nil（不筛选），
+// 真值与假值词表对齐其它模块的同名解析，其余交给 strconv.ParseBool。
+func parseTriStateBoolQuery(raw string) (*bool, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case "", "all":
+		return nil, nil
+	case "1", "true", "yes", "on", "enabled", "published":
+		parsed := true
+		return &parsed, nil
+	case "0", "false", "no", "off", "disabled", "draft":
+		parsed := false
+		return &parsed, nil
+	default:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, err
+		}
+		return &parsed, nil
+	}
 }
 
 // CreatePost 创建文章。

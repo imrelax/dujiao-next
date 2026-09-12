@@ -10,12 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dujiao-next/internal/constants"
 	contentapp "github.com/dujiao-next/internal/modules/content/application"
 	contentdomain "github.com/dujiao-next/internal/modules/content/domain"
 	localfilestore "github.com/dujiao-next/internal/modules/content/infrastructure/filestore/local"
 	"github.com/dujiao-next/internal/modules/content/infrastructure/gormstore"
 	contenttransport "github.com/dujiao-next/internal/modules/content/transport/http"
 	"github.com/dujiao-next/internal/platform/http/response"
+	"github.com/dujiao-next/internal/shared/jsonmap"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -258,5 +260,129 @@ func TestAdminContentHandlersValidationAndDomainErrorContracts(t *testing.T) {
 				t.Fatalf("business status want %d got %d body=%s", test.wantCode, got.StatusCode, recorder.Body.String())
 			}
 		})
+	}
+}
+
+// 后台文章列表的 category_id 查询参数：等值匹配（与商品后台一致，不展开子分类），
+// 并与 type 按 AND 组合。
+func TestAdminContentPostsListFilterByCategoryID(t *testing.T) {
+	handler, _, db := setupAdminContentHandlerTest(t)
+	router := adminContentTestRouter(handler)
+
+	root := contentdomain.PostCategory{Slug: "admin-filter-root", NameJSON: jsonmap.JSON{"zh-CN": "后台筛选根"}, IsActive: true}
+	if err := db.Create(&root).Error; err != nil {
+		t.Fatalf("create root category failed: %v", err)
+	}
+	rootID := root.ID
+	child := contentdomain.PostCategory{Slug: "admin-filter-child", NameJSON: jsonmap.JSON{"zh-CN": "后台筛选子"}, ParentID: &rootID, IsActive: true}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatalf("create child category failed: %v", err)
+	}
+	childID := child.ID
+
+	fixtures := []contentdomain.Post{
+		{Slug: "admin-filter-post-child", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "后台子分类"}, CategoryID: &childID},
+		{Slug: "admin-filter-post-draft", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "后台子分类草稿"}, CategoryID: &childID},
+		{Slug: "admin-filter-post-notice", Type: constants.PostTypeNotice, TitleJSON: jsonmap.JSON{"zh-CN": "后台子分类公告"}, CategoryID: &childID},
+		{Slug: "admin-filter-post-none", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "后台未分类"}},
+	}
+	for i := range fixtures {
+		if err := db.Create(&fixtures[i]).Error; err != nil {
+			t.Fatalf("create post fixture %q failed: %v", fixtures[i].Slug, err)
+		}
+	}
+
+	slugs := func(path string) map[string]bool {
+		t.Helper()
+		recorder := requestAdminContent(t, router, http.MethodGet, path, "")
+		payload := decodeAdminContentResponse(t, recorder)
+
+		raw, err := json.Marshal(payload.Data)
+		if err != nil {
+			t.Fatalf("re-marshal %s failed: %v", path, err)
+		}
+		var rows []contentdomain.Post
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			t.Fatalf("decode %s failed: %v body=%s", path, err, recorder.Body.String())
+		}
+
+		got := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	got := slugs(fmt.Sprintf("/api/v1/admin/posts?category_id=%d", childID))
+	if !got["admin-filter-post-child"] || !got["admin-filter-post-draft"] || !got["admin-filter-post-notice"] || got["admin-filter-post-none"] || len(got) != 3 {
+		t.Fatalf("admin category filter mismatch: %+v", got)
+	}
+
+	got = slugs(fmt.Sprintf("/api/v1/admin/posts?category_id=%d&type=%s", childID, constants.PostTypeBlog))
+	if !got["admin-filter-post-child"] || !got["admin-filter-post-draft"] || len(got) != 2 {
+		t.Fatalf("admin category + type mismatch: %+v", got)
+	}
+
+	got = slugs("/api/v1/admin/posts")
+	if len(got) != 4 {
+		t.Fatalf("admin without category filter should return all posts: %+v", got)
+	}
+}
+
+// 后台文章列表的 is_published 查询参数：三态筛选，并与 type 按 AND 组合。
+func TestAdminContentPostsListFilterByPublishedState(t *testing.T) {
+	handler, _, db := setupAdminContentHandlerTest(t)
+	router := adminContentTestRouter(handler)
+
+	fixtures := []contentdomain.Post{
+		{Slug: "admin-state-published", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "后台已发布"}, IsPublished: true},
+		{Slug: "admin-state-draft", Type: constants.PostTypeBlog, TitleJSON: jsonmap.JSON{"zh-CN": "后台草稿"}, IsPublished: false},
+		{Slug: "admin-state-notice-draft", Type: constants.PostTypeNotice, TitleJSON: jsonmap.JSON{"zh-CN": "后台公告草稿"}, IsPublished: false},
+	}
+	for i := range fixtures {
+		if err := db.Create(&fixtures[i]).Error; err != nil {
+			t.Fatalf("create post fixture %q failed: %v", fixtures[i].Slug, err)
+		}
+	}
+
+	slugs := func(path string) map[string]bool {
+		t.Helper()
+		recorder := requestAdminContent(t, router, http.MethodGet, path, "")
+		payload := decodeAdminContentResponse(t, recorder)
+
+		raw, err := json.Marshal(payload.Data)
+		if err != nil {
+			t.Fatalf("re-marshal %s failed: %v", path, err)
+		}
+		var rows []contentdomain.Post
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			t.Fatalf("decode %s failed: %v body=%s", path, err, recorder.Body.String())
+		}
+
+		got := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			got[row.Slug] = true
+		}
+		return got
+	}
+
+	got := slugs("/api/v1/admin/posts?is_published=1")
+	if !got["admin-state-published"] || got["admin-state-draft"] || got["admin-state-notice-draft"] || len(got) != 1 {
+		t.Fatalf("is_published=1 should return only published rows: %+v", got)
+	}
+
+	got = slugs("/api/v1/admin/posts?is_published=0")
+	if !got["admin-state-draft"] || !got["admin-state-notice-draft"] || got["admin-state-published"] || len(got) != 2 {
+		t.Fatalf("is_published=0 should return only drafts: %+v", got)
+	}
+
+	got = slugs("/api/v1/admin/posts?is_published=all")
+	if len(got) != 3 {
+		t.Fatalf("is_published=all should return all rows: %+v", got)
+	}
+
+	got = slugs(fmt.Sprintf("/api/v1/admin/posts?is_published=0&type=%s", constants.PostTypeNotice))
+	if !got["admin-state-notice-draft"] || len(got) != 1 {
+		t.Fatalf("is_published=0 + type mismatch: %+v", got)
 	}
 }
