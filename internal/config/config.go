@@ -289,6 +289,11 @@ type WebConfig struct {
 	// AdminPath 后台访问路径前缀，例如 "/admin" 或 "/dj-mgmt-7x9k2"。
 	// 校验规则见 internal/web.ValidateAdminPath。
 	AdminPath string `mapstructure:"admin_path"`
+
+	// UserSPADisabled 关闭前台 SPA：不再注册前台的兜底路由，未命中后端路由的
+	// 请求一律由 Gin 默认返回 404。只影响页面托管，/api、/uploads、/health 与
+	// 后台都不经过该兜底路由，因此不受影响。
+	UserSPADisabled bool `mapstructure:"user_spa_disabled"`
 }
 
 // ResellerConfig 分销商模式配置。
@@ -422,6 +427,7 @@ func Load() *Config {
 	viper.SetDefault("captcha.turnstile.verify_url", "https://challenges.cloudflare.com/turnstile/v0/siteverify")
 	viper.SetDefault("captcha.turnstile.timeout_ms", 2000)
 	viper.SetDefault("web.admin_path", "/admin")
+	viper.SetDefault("web.user_spa_disabled", false)
 	viper.SetDefault("reseller.enabled", false)
 	viper.SetDefault("reseller.main_hosts", []string{"localhost", "127.0.0.1", "::1"})
 	viper.SetDefault("reseller.trusted_forwarded_host", false)

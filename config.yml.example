@@ -189,3 +189,9 @@ web:
   # 强烈建议改成不易猜测的字符串以降低自动化扫描风险
   # 例如: "/dj-mgmt-7x9k2" 或 "/console-private"
   admin_path: "/admin"
+  # 关闭前台页面（前台 SPA）
+  # 置为 true 后不再注册前台兜底路由，访问前台地址一律返回 404。
+  # 只影响页面托管：API（/api）、上传文件（/uploads）、健康检查（/health）
+  # 与后台（admin_path）都不经过前台兜底路由，通讯与后台管理不受影响。
+  # 适用于只对外提供 API，或前台由独立前端/独立域名另行托管的部署。
+  user_spa_disabled: false

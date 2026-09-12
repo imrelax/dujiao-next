@@ -248,8 +248,13 @@ func SetupRouter(cfg *config.Config, c *container.Container) *gin.Engine {
 		if err := web.RegisterAdmin(r, cfg.Web.AdminPath, web.AdminFS()); err != nil {
 			log.Sugar().Fatalf("注册 admin SPA 失败: %v", err)
 		}
-		if err := web.RegisterUser(r, web.UserFS()); err != nil {
-			log.Sugar().Fatalf("注册 user SPA 失败: %v", err)
+		// 前台兜底路由由 RegisterUser 通过 NoRoute 注册，是唯一一处 NoRoute。
+		// 关掉前台时干脆不注册：Gin 的默认 NoRoute 会返回 404，前台整体下线，
+		// 而 /api、/uploads、/health 与后台都是显式路由，匹配不到兜底路由。
+		if !cfg.Web.UserSPADisabled {
+			if err := web.RegisterUser(r, web.UserFS()); err != nil {
+				log.Sugar().Fatalf("注册 user SPA 失败: %v", err)
+			}
 		}
 	}
 
